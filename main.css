@@ -1,0 +1,664 @@
+/* Valors --app-* per defecte (mode clar, mateixos valors que LIGHT_THEME a
+   APP_Dades.py). apply_theme_css() els sobreescriu a cada rerun segons
+   st.session_state["theme"]: Python és la font única de veritat del tema,
+   aquest bloc només és el fallback estàtic abans que carregui el <style>
+   dinàmic. */
+:root {
+  color-scheme: light;
+  --app-bg: #FAF9F6;
+  --app-surface: rgba(255, 255, 255, 0.55);
+  --app-surface-solid: #ffffff;
+  --app-table-alt: #D9773F;
+  --app-primary: #2B3A67;
+  --app-primary-hover: #D9773F;
+  --app-accent: #D9773F;
+  --app-text: #262B36;
+  --app-text-inverse: #ffffff;
+  --app-border: rgba(43, 58, 103, 0.16);
+  --app-border-strong: rgba(43, 58, 103, 0.26);
+  --app-focus: rgba(38, 43, 54, 0.35);
+  --app-shadow: rgba(0, 0, 0, 0.12);
+}
+
+#MainMenu {visibility: hidden;}
+footer {visibility: hidden;}
+header {visibility: hidden;}
+[data-testid= "stAppViewContainer"]{
+  background-color: var(--app-bg);
+}
+body { background-color: var(--app-bg); }
+
+/* Contenidor del contingut: marge lateral fluid (16px al mòbil fins a 64px a
+   pantalles grans) i amplada màxima centrada, perquè s'adapti de manera
+   contínua a qualsevol dispositiu i resolució, sense marges fixos que
+   ofeguin les pantalles petites. */
+.block-container {
+  padding-left: clamp(16px, 4vw, 64px) !important;
+  padding-right: clamp(16px, 4vw, 64px) !important;
+  padding-top: clamp(8px, 1.5vw, 24px) !important;
+  max-width: 1500px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.image-apce-container {
+  display: flex;
+  justify-content: flex-start;
+  align-items: center;
+  width: 100%;
+  margin: 0;
+}
+
+.image-apce-container .image-apce {
+  width: clamp(190px, 20vw, 285px);
+  max-width: min(72vw, 285px);
+  height: auto;
+  aspect-ratio: 350 / 149;
+  object-fit: contain;
+  display: block;
+}
+
+/* ==========================================================================
+   TARGETA DE CAPÇALERA (logo + menú principal en una sola peça visual)
+   És el primer element que veu qualsevol visitant: es tracta com una única
+   barra de navegació moderna (vora + fons + ombra suau), no dos elements
+   solts. El menú (radiogroup) que hi ha a dins queda sense la seva pròpia
+   vora/fons perquè no es vegi una caixa dins d'una altra caixa.
+   ========================================================================== */
+/* Streamlit posa un gap fix (16px) entre CADA element de la columna vertical,
+   inclosos els divs àncora buits (#dalt, theme-toggle-anchor, header-card-anchor)
+   que precedeixen la targeta. Es compensa amb un marge negatiu NOMÉS aquí, sense
+   tocar el gap global (que afectaria tota la resta de l'app). */
+.element-container:has(.header-card-anchor) {
+  margin-top: -54px !important;
+}
+.element-container:has(.header-card-anchor) + div[data-testid="stVerticalBlockBorderWrapper"] {
+  border: 1px solid var(--app-border) !important;
+  border-radius: 18px !important;
+  background: var(--app-surface-solid, #fff7ed) !important;
+  box-shadow: 0 4px 18px var(--app-shadow);
+  padding: clamp(10px, 1.4vw, 18px) clamp(14px, 2vw, 28px);
+  margin-bottom: 6px;
+}
+.element-container:has(.header-card-anchor) + div[data-testid="stVerticalBlockBorderWrapper"] [data-testid="stVerticalBlockBorderWrapper"] {
+  border: none !important;
+  box-shadow: none !important;
+}
+.element-container:has(.header-card-anchor) + div[data-testid="stVerticalBlockBorderWrapper"]
+  .element-container:has(.menu-nav-anchor) + .element-container [role="radiogroup"] {
+  border: none;
+  background: transparent;
+  padding: 0;
+  margin: 0;
+}
+/* Redueix l'espai entre la targeta i el títol de cada apartat (el primer que es
+   mostra en cada pestanya: "INDICADORS TERRITORIALS", "VIABILITAT FINANCERA"...),
+   sense tocar el marge superior global dels altres ~130 títols de l'app. */
+.element-container:has(.header-card-anchor) + div[data-testid="stVerticalBlockBorderWrapper"]
+  + .element-container [data-testid="stHeading"] {
+  margin-top: 4px;
+}
+
+/* ===========================================================================
+   TÍTOLS D'APARTAT (st.subheader)
+   Un únic punt de control per als ~130 títols de secció de l'app (p. ex.
+   "PRODUCCIÓ D'HABITATGES A BARCELONA"): abans usaven el gris per defecte
+   d'Streamlit, sense cap relació amb la identitat de marca. Ara agafen el
+   color de text/marca de l'app i un petit subratllat de color com a accent,
+   sense haver de tocar cap dels ~130 st.subheader() del codi Python.
+   ========================================================================== */
+[data-testid= "stHeading"]{
+  margin-top: clamp(22px, 3vw, 34px);
+  margin-bottom: clamp(16px, 2.2vw, 22px);
+  text-align: center;
+}
+
+[data-testid="stHeading"] h1,
+[data-testid="stHeading"] h2,
+[data-testid="stHeading"] h3 {
+  display: inline-block;
+  position: relative;
+  color: var(--app-text) !important;
+  font-weight: 800 !important;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  padding-bottom: 12px;
+}
+
+[data-testid="stHeading"] h1::after,
+[data-testid="stHeading"] h2::after,
+[data-testid="stHeading"] h3::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  bottom: 0;
+  transform: translateX(-50%);
+  width: 56px;
+  height: 3px;
+  border-radius: 3px;
+  background: var(--app-primary);
+}
+
+* {
+  font-family: "Arial", sans-serif;
+}
+
+body {
+  text-align: center;
+  color: var(--app-text);
+  width: 100%;
+}
+
+p, ul, li{
+  font-size: 1em;
+  line-height: 1.5;
+  margin-bottom: 10px;
+}
+
+table {
+  border-collapse: collapse;
+  margin: 5px auto;
+  font-size: clamp(0.58rem, 0.5rem + 0.25vw, 0.75rem);
+  font-family: sans-serif;
+  min-width: 400px;
+  box-shadow: 0 0 20px var(--app-shadow);
+  text-align: center;
+}
+
+table thead th {
+  background-color: var(--app-primary);
+  color: var(--app-text-inverse);
+  text-align: center;
+}
+
+table tbody tr:nth-of-type(even) {
+  background-color: var(--app-table-alt);
+}
+
+table tbody tr:last-of-type {
+  border-bottom: 2px solid var(--app-primary);
+}
+
+table tbody td {
+  padding: clamp(6px, 1vw, 12px) clamp(8px, 1.2vw, 15px);
+}
+
+/* El contenidor que envolta la taula (df.to_html) permet scroll lateral quan la
+   taula és més ampla que l'espai disponible: així les taules trimestrals i
+   anuals amb moltes columnes no es surten dels marges en cap resolució, i el
+   text s'adapta amb font-size fluida per no quedar ni massa gran ni massa estret. */
+[data-testid="stMarkdownContainer"]:has(> table) {
+  overflow-x: auto;
+}
+
+
+.button, .button:link, .button:visited, .download-button {
+  font-size: 20px;
+  background-color: var(--app-primary);
+  color: var(--app-text-inverse);
+  padding: 14px 25px;
+  text-align: center;
+  text-decoration: none;
+  display: inline-block;
+  border: none;
+  border-radius: 4px;
+}
+
+.download-button {
+  background-color: var(--app-primary);
+  color: var(--app-text-inverse);
+  border: none;
+  padding: 12px 24px; /* Padding around text */
+  font-size: 16px; /* Text size */
+  font-weight: bold; /* Bold text */
+  border-radius: 4px;
+  transition: all 0.3s ease; /* Smooth transition on hover */
+  transition: background-color 0.15s,
+  color 0.15s;
+}
+
+.download-button:hover {
+  background-color: var(--app-primary-hover); /* hover */
+  cursor: pointer; /* Change cursor to hand on hover */
+}
+
+.custom-box {
+  border: 2px solid var(--app-accent);
+  background-color: var(--app-accent);
+  padding: 10px;
+  border-radius: 5px;
+  margin: 10px 30px 10px 30px;
+  color: var(--app-text);
+  font-weight: bold;
+}
+
+div[data-testid="stMetric"] {
+  background-color: var(--app-accent);
+  border: 1px solid var(--app-accent);
+  padding: 0.3% 1% 0.3% 1%;
+  margin: 0px 30px 0px 30px;
+  border-radius: 5px;
+  color: var(--app-primary);
+  overflow-wrap: break-word;
+}
+
+[data-testid="stMetric"] {
+  height: fit-content;
+  margin: auto;
+  overflow: visible;
+}
+
+[data-testid="stMetric"] > div {
+  width: fit-content;
+  margin: auto;
+  overflow: visible;
+}
+
+[data-testid="stMetric"] label {
+  width: fit-content;
+  margin: 5px auto;
+  overflow: visible;
+}
+
+div[data-testid="stMetric"] {
+  color: var(--app-text);
+  overflow-wrap: break-word;
+  overflow: visible;
+}
+
+div[data-testid="stMetric"]  label{
+  overflow-wrap: break-word;
+  white-space: break-spaces;
+  color: var(--app-text);
+  overflow: visible;
+}
+
+.stMultiSelect [data-baseweb=select] span{
+  max-width: 500px;
+}
+
+/* ===========================================================================
+   RADIOGROUPS (estil "pastilla", igual que el menú principal)
+   Tots els st.radio() de l'app (tipus d'indicador, mercat de venda/lloguer,
+   àrea geogràfica...) agafen el mateix aspecte de botó en pastilla que el
+   menú principal, per coherència visual. NOMÉS l'aparença de cada botó: no
+   es toca l'orientació horitzontal/vertical, que ja controla Streamlit amb
+   horizontal=True/False a cada crida.
+   ========================================================================== */
+[role="radiogroup"] {
+  gap: clamp(4px, 0.8vw, 8px);
+}
+[role="radiogroup"] > label {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 34px;
+  margin: 0;
+  padding: clamp(5px, 0.9vw, 8px) clamp(9px, 1.4vw, 14px);
+  border: 1px solid var(--app-border);
+  border-radius: 9px;
+  background: var(--app-surface);
+  color: var(--app-text);
+  cursor: pointer;
+  transition: background-color 0.15s, border-color 0.15s, color 0.15s;
+}
+[role="radiogroup"] > label > div:first-child { display: none; }
+[role="radiogroup"] label p {
+  color: inherit;
+  font-weight: 700;
+  font-size: clamp(0.78rem, 0.7rem + 0.3vw, 0.95rem) !important;
+  line-height: 1.1;
+  margin: 0;
+  white-space: nowrap;
+}
+[role="radiogroup"] > label:hover {
+  background: var(--app-primary-hover);
+  border-color: var(--app-border-strong);
+}
+[role="radiogroup"] > label:has(input:checked) {
+  color: var(--app-text-inverse);
+  background: var(--app-primary);
+  border-color: var(--app-primary);
+}
+[role="radiogroup"] > label:focus-within {
+  outline: 2px solid var(--app-focus);
+  outline-offset: 2px;
+}
+
+/* ===========================================================================
+   MENÚ DE NAVEGACIÓ PRINCIPAL
+   És un st.radio horitzontal convertit en una barra de botons responsive.
+   Substitueix el component extern option_menu (un iframe que deixava forats
+   en blanc a mòbils). Els pictogrames són màscares SVG en CSS: no cal cap
+   dependència externa i es mantenen del mateix color que el text.
+   ========================================================================== */
+.element-container:has(.menu-nav-anchor) + .element-container [role="radiogroup"],
+.element-container:has(.indicadors-menu-anchor) + .element-container [role="radiogroup"],
+.element-container:has(.oferta-menu-anchor) + .element-container [role="radiogroup"] {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: clamp(4px, 0.8vw, 8px);
+  width: fit-content;
+  max-width: 100%;
+  margin: 8px auto 24px;
+  padding: 6px;
+  border: 1px solid var(--app-border);
+  border-radius: 12px;
+  background: var(--app-surface);
+
+  & > label {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    min-height: 38px;
+    margin: 0;
+    padding: clamp(6px, 1vw, 9px) clamp(10px, 1.6vw, 16px);
+    border: 1px solid transparent;
+    border-radius: 9px;
+    background: transparent;
+    color: var(--app-text);
+    cursor: pointer;
+    transition: background-color 0.15s, border-color 0.15s, color 0.15s;
+  }
+
+  /* Amaga el cercle natiu del radio */
+  & > label > div:first-child { display: none; }
+
+  & label::before {
+    content: "";
+    width: 1.05em;
+    height: 1.05em;
+    flex: 0 0 auto;
+    background: currentColor;
+    -webkit-mask: var(--nav-icon) center / contain no-repeat;
+    mask: var(--nav-icon) center / contain no-repeat;
+  }
+
+  & label p {
+    color: inherit;
+    font-weight: 700;
+    font-size: clamp(0.8rem, 0.72rem + 0.3vw, 1.05rem) !important;
+    line-height: 1.1;
+    margin: 0;
+    white-space: nowrap;
+  }
+
+  & > label:hover {
+    color: var(--app-text);
+    background: var(--app-primary-hover);
+    border-color: var(--app-border-strong);
+  }
+  & > label:has(input:checked) {
+    color: var(--app-text-inverse);
+    background: var(--app-primary);
+    border-color: var(--app-primary);
+  }
+  & > label:focus-within {
+    outline: 2px solid var(--app-focus);
+    outline-offset: 2px;
+  }
+}
+
+/* Icones del menú principal (4 entrades: Indicadors Territorials / Estudi d'oferta /
+   Informe de mercat i sectorial / Viabilitat financera). */
+.element-container:has(.menu-nav-anchor) + .element-container [role="radiogroup"] {
+  & > label:nth-child(1) { --nav-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2m6.93 6h-2.95a15.7 15.7 0 0 0-1.38-3.56A8.03 8.03 0 0 1 18.92 8M12 4.04c.83 1.2 1.48 2.53 1.91 3.96h-3.82c.43-1.43 1.08-2.76 1.91-3.96M4.26 14a7.8 7.8 0 0 1 0-4h3.38a16.5 16.5 0 0 0 0 4zm.82 2h2.95c.32 1.25.78 2.45 1.38 3.56A7.99 7.99 0 0 1 5.08 16m2.95-8H5.08a7.99 7.99 0 0 1 4.33-3.56A15.7 15.7 0 0 0 8.03 8M12 19.96c-.83-1.2-1.48-2.53-1.91-3.96h3.82c-.43 1.43-1.08 2.76-1.91 3.96M14.34 14H9.66a14.8 14.8 0 0 1 0-4h4.68a14.8 14.8 0 0 1 0 4m.25 5.56c.6-1.11 1.06-2.31 1.38-3.56h2.95a8.03 8.03 0 0 1-4.33 3.56M16.36 14a16.5 16.5 0 0 0 0-4h3.38a7.8 7.8 0 0 1 0 4z'/%3E%3C/svg%3E"); }
+  & > label:nth-child(2) { --nav-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M17 11V3H7v4H3v14h8v-4h2v4h8V11zM7 19H5v-2h2zm0-4H5v-2h2zm0-4H5V9h2zm4 4H9v-2h2zm0-4H9V9h2zm0-4H9V5h2zm4 8h-2v-2h2zm0-4h-2V9h2zm0-4h-2V5h2zm4 12h-2v-2h2zm0-4h-2v-2h2zm0-4h-2V9h2z'/%3E%3C/svg%3E"); }
+  & > label:nth-child(3) { --nav-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M6 2c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V8l-6-6zm7 7V3.5L18.5 9z'/%3E%3C/svg%3E"); }
+  & > label:nth-child(4) { --nav-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M7 2h10a2 2 0 0 1 2 2v16a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2m0 2v4h10V4H7m0 6v2h2v-2H7m4 0v2h2v-2h-2m4 0v2h2v-2h-2m-8 4v2h2v-2H7m4 0v2h2v-2h-2m4 0v4h2v-4h-2m-8 4v2h2v-2H7m4 0v2h2v-2h-2'/%3E%3C/svg%3E"); }
+}
+
+/* El menú principal (4 entrades) es mostra en graella 2x2 en lloc de fila que
+   es trenca en 3+1; els altres menús (Indicadors Territorials, Estudi d'oferta)
+   mantenen la fila flexible, més adequada per als seus 7 i 5 elements. */
+.element-container:has(.menu-nav-anchor) + .element-container [role="radiogroup"] {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(200px, 1fr));
+}
+@media (max-width: 760px) {
+  .element-container:has(.menu-nav-anchor) + .element-container [role="radiogroup"] {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Icones d'"Indicadors Territorials" (7 entrades: mateixos pictogrames que abans de
+   reagrupar-los sota un segon menú). */
+.element-container:has(.indicadors-menu-anchor) + .element-container [role="radiogroup"] {
+  & > label:nth-child(1) { --nav-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2m6.93 6h-2.95a15.7 15.7 0 0 0-1.38-3.56A8.03 8.03 0 0 1 18.92 8M12 4.04c.83 1.2 1.48 2.53 1.91 3.96h-3.82c.43-1.43 1.08-2.76 1.91-3.96M4.26 14a7.8 7.8 0 0 1 0-4h3.38a16.5 16.5 0 0 0 0 4zm.82 2h2.95c.32 1.25.78 2.45 1.38 3.56A7.99 7.99 0 0 1 5.08 16m2.95-8H5.08a7.99 7.99 0 0 1 4.33-3.56A15.7 15.7 0 0 0 8.03 8M12 19.96c-.83-1.2-1.48-2.53-1.91-3.96h3.82c-.43 1.43-1.08 2.76-1.91 3.96M14.34 14H9.66a14.8 14.8 0 0 1 0-4h4.68a14.8 14.8 0 0 1 0 4m.25 5.56c.6-1.11 1.06-2.31 1.38-3.56h2.95a8.03 8.03 0 0 1-4.33 3.56M16.36 14a16.5 16.5 0 0 0 0-4h3.38a7.8 7.8 0 0 1 0 4z'/%3E%3C/svg%3E"); }
+  & > label:nth-child(2) { --nav-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M4 10v7h3v-7zm6 0v7h3v-7zM2 22h19v-3H2zm14-12v7h3v-7zm-4.5-9L2 6v2h19V6z'/%3E%3C/svg%3E"); }
+  & > label:nth-child(3), & > label:nth-child(4) { --nav-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M20.5 3l-.16.03L15 5.1 9 3 3.36 4.9c-.21.07-.36.25-.36.48V20.5c0 .28.22.5.5.5l.16-.03L9 18.9l6 2.1 5.64-1.9c.21-.07.36-.25.36-.48V3.5c0-.28-.22-.5-.5-.5M15 19l-6-2.11V5l6 2.11z'/%3E%3C/svg%3E"); }
+  & > label:nth-child(5), & > label:nth-child(6) { --nav-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z'/%3E%3C/svg%3E"); }
+  & > label:nth-child(7) { --nav-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M20.5 3l-.16.03L15 5.1 9 3 3.36 4.9c-.21.07-.36.25-.36.48V20.5c0 .28.22.5.5.5l.16-.03L9 18.9l6 2.1 5.64-1.9c.21-.07.36-.25.36-.48V3.5c0-.28-.22-.5-.5-.5M15 19l-6-2.11V5l6 2.11z'/%3E%3C/svg%3E"); }
+}
+
+/* Icones de la navegació interna d'"Estudi d'oferta d'obra nova APCE" (5 entrades). */
+.element-container:has(.oferta-menu-anchor) + .element-container [role="radiogroup"] {
+  & > label:nth-child(1) { --nav-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M4 10v7h3v-7zm6 0v7h3v-7zM2 22h19v-3H2zm14-12v7h3v-7zm-4.5-9L2 6v2h19V6z'/%3E%3C/svg%3E"); }
+  & > label:nth-child(2) { --nav-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M20.5 3l-.16.03L15 5.1 9 3 3.36 4.9c-.21.07-.36.25-.36.48V20.5c0 .28.22.5.5.5l.16-.03L9 18.9l6 2.1 5.64-1.9c.21-.07.36-.25.36-.48V3.5c0-.28-.22-.5-.5-.5M15 19l-6-2.11V5l6 2.11z'/%3E%3C/svg%3E"); }
+  & > label:nth-child(3), & > label:nth-child(4) { --nav-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z'/%3E%3C/svg%3E"); }
+  & > label:nth-child(5) { --nav-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M20.5 3l-.16.03L15 5.1 9 3 3.36 4.9c-.21.07-.36.25-.36.48V20.5c0 .28.22.5.5.5l.16-.03L9 18.9l6 2.1 5.64-1.9c.21-.07.36-.25.36-.48V3.5c0-.28-.22-.5-.5-.5M15 19l-6-2.11V5l6 2.11z'/%3E%3C/svg%3E"); }
+}
+
+@media (max-width: 760px) {
+  .element-container:has(.menu-nav-anchor) + .element-container [role="radiogroup"],
+  .element-container:has(.indicadors-menu-anchor) + .element-container [role="radiogroup"],
+  .element-container:has(.oferta-menu-anchor) + .element-container [role="radiogroup"] {
+    width: 100%;
+    justify-content: stretch;
+  }
+  .element-container:has(.menu-nav-anchor) + .element-container [role="radiogroup"] > label,
+  .element-container:has(.indicadors-menu-anchor) + .element-container [role="radiogroup"] > label,
+  .element-container:has(.oferta-menu-anchor) + .element-container [role="radiogroup"] > label {
+    flex: 1 1 130px;
+    justify-content: center;
+  }
+}
+/* Ajustos automàtics per a controls natius de Streamlit en mode fosc. */
+[data-testid="stMarkdownContainer"],
+[data-testid="stWidgetLabel"],
+[data-testid="stSelectbox"],
+[data-testid="stRadio"],
+[data-testid="stMetric"],
+.stMultiSelect [data-baseweb="select"] {
+  color: var(--app-text);
+}
+
+/* La regla d'amunt fixa el color al div stMarkdownContainer que embolcalla el <p>
+   de cada pill del menú, cosa que trenca l'herència de color quan el <label> pare
+   està seleccionat (fons --app-primary, text --app-text-inverse): el <p> es queda
+   amb --app-text en lloc del blanc/invers del pare, i pot quedar il·legible si
+   --app-text i --app-primary tenen una lluminositat semblant. Es força l'herència
+   real des del <label> seleccionat.
+   ========================================================================== */
+[role="radiogroup"] > label:has(input:checked) * {
+  color: inherit !important;
+}
+
+[data-baseweb="select"] > div,
+[data-baseweb="popover"] ul,
+.stTextInput input,
+.stNumberInput input {
+  background-color: var(--app-surface-solid) !important;
+  color: var(--app-text) !important;
+  border-color: var(--app-border) !important;
+}
+
+[data-testid="stMetric"] [data-testid="stMetricValue"],
+[data-testid="stMetric"] [data-testid="stMetricDelta"] {
+  color: var(--app-text) !important;
+}
+
+/* ==========================================================================
+   MAPA INTERACTIU
+   Ajust visual lleuger per al component Folium embegut.
+   ========================================================================== */
+iframe[title="streamlit_folium.st_folium"] {
+  border: 1px solid var(--app-border);
+  border-radius: 8px;
+  background: var(--app-surface);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
+}
+
+/* ==========================================================================
+   SWITCH CLAR / FOSC
+   Flotant a la part superior dreta. Mateix patró que .menu-nav-anchor: una
+   àncora buida just abans de l'st.toggle permet trobar-lo i posicionar-lo
+   amb CSS sense dependre de classes internes de Streamlit.
+   ========================================================================== */
+.element-container:has(.theme-toggle-anchor) + .element-container {
+  position: fixed;
+  top: 8px;
+  right: clamp(8px, 2vw, 24px);
+  z-index: 1001;
+  width: auto !important;
+}
+/* Streamlit dona width:100% (via l'ample del contenidor de pàgina) al
+   checkbox/toggle intern per defecte: forcem que s'ajusti al contingut
+   perquè el switch flotant no s'estiri per tota l'amplada de la pantalla. */
+.element-container:has(.theme-toggle-anchor) + .element-container [data-testid="stCheckbox"] {
+  width: auto !important;
+  min-width: 0 !important;
+}
+.element-container:has(.theme-toggle-anchor) + .element-container label {
+  color: var(--app-text);
+}
+@media (max-width: 480px) {
+  .element-container:has(.theme-toggle-anchor) + .element-container {
+    top: 6px;
+    right: 6px;
+  }
+}
+
+/* ==========================================================================
+   BOTÓ "TORNAR A DALT"
+   Enllaç fix a baix a la dreta que porta a l'àncora #dalt del principi de la
+   pàgina (scroll suau via html{scroll-behavior:smooth}). Sempre visible,
+   independent de la pestanya activa.
+   ========================================================================== */
+#dalt { scroll-margin-top: 10px; }
+html, body, [data-testid="stAppViewContainer"], section.main { scroll-behavior: smooth; }
+
+.boto-amunt {
+  position: fixed;
+  bottom: 22px;
+  right: 22px;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: var(--app-primary);
+  color: var(--app-text-inverse);
+  font-size: 22px;
+  text-decoration: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 2px 8px var(--app-shadow);
+  z-index: 1000;
+}
+.boto-amunt:hover { background: var(--app-primary-hover); color: var(--app-text-inverse); }
+@media (max-width: 480px) {
+  .boto-amunt { bottom: 14px; right: 14px; width: 38px; height: 38px; font-size: 18px; }
+}
+
+/* ==========================================================================
+   ÍNDEX DE SECCIÓ (viab-toc)
+   Petita barra d'enllaços interns (#àncora) que fa scroll suau (mateix
+   mecanisme que el botó "Tornar a dalt") cap a cada apartat d'una pestanya.
+   Mateix aspecte de pastilla que els radiogroups, per coherència visual.
+   ========================================================================== */
+.viab-toc {
+  display: flex;
+  flex-wrap: wrap;
+  gap: clamp(4px, 0.8vw, 8px);
+  margin: 4px 0 20px 0;
+}
+.viab-toc a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 34px;
+  padding: clamp(5px, 0.9vw, 8px) clamp(9px, 1.4vw, 14px);
+  border: 1px solid var(--app-border);
+  border-radius: 9px;
+  background: var(--app-surface);
+  color: var(--app-text);
+  font-weight: 700;
+  font-size: clamp(0.78rem, 0.7rem + 0.3vw, 0.95rem);
+  text-decoration: none;
+  transition: background-color 0.15s, border-color 0.15s, color 0.15s;
+}
+.viab-toc a:hover {
+  background: var(--app-primary-hover);
+  border-color: var(--app-border-strong);
+}
+.viab-anchor { scroll-margin-top: 10px; }
+
+/* ==========================================================================
+   INFORMES SECTORIALS (targetes amb imatge clicable)
+   Portada de cada informe com a enllaç al PDF corresponent (apcebcn.cat).
+   ========================================================================== */
+.informe-sectorial-link,
+.informe-sectorial-link:link,
+.informe-sectorial-link:visited,
+.informe-sectorial-link:hover,
+.informe-sectorial-link:active,
+.informe-sectorial-link:focus {
+  display: block;
+  text-decoration: none;
+  color: var(--app-text);
+  border: 1px solid var(--app-border);
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--app-surface);
+  box-shadow: 0 2px 6px var(--app-shadow);
+  transition: transform 0.15s, box-shadow 0.15s, border-color 0.15s;
+}
+.informe-sectorial-link:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 6px 14px var(--app-shadow);
+  border-color: var(--app-border-strong);
+}
+.informe-sectorial-img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+.informe-sectorial-caption,
+.informe-sectorial-link:hover .informe-sectorial-caption {
+  display: block;
+  margin: 0;
+  padding: 10px;
+  text-align: center;
+  font-weight: 700;
+  text-decoration: none;
+  color: var(--app-text);
+}
+
+/* ==========================================================================
+   ESTUDI D'OFERTA D'OBRA NOVA APCE (afegit)
+   Textos literals de l'informe: context visible però discret (mateix criteri
+   que l'app de referència Estudi_oferta_atlas.py, adaptat als colors ja
+   existents en aquesta app en lloc de la seva paleta verda).
+   ========================================================================== */
+.oferta-text-informe {
+  margin: 4px 0 16px;
+  padding: 10px 12px 10px 14px;
+  border-left: 3px solid var(--app-primary);
+  border-radius: 0 6px 6px 0;
+  background: var(--app-surface);
+  color: var(--app-text);
+  font-size: clamp(0.86rem, 0.8rem + 0.28vw, 1rem);
+  line-height: 1.5;
+  text-align: justify;
+}
+
+/* Navegació interna de la pestanya (Catalunya / Províncies.../ Municipis...): centrada,
+   mateix criteri que el menú principal (.menu-nav-anchor). */
+.element-container:has(.oferta-menu-anchor) + .element-container [role="radiogroup"],
+.element-container:has(.indicadors-menu-anchor) + .element-container [role="radiogroup"] {
+  justify-content: center;
+  width: fit-content;
+  max-width: 100%;
+  margin: 8px auto 24px;
+}
+
