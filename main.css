@@ -9,13 +9,13 @@
   --app-surface: rgba(255, 255, 255, 0.55);
   --app-surface-solid: #ffffff;
   --app-table-alt: #D9773F;
-  --app-primary: #2B3A67;
+  --app-primary: #2C4A3B;
   --app-primary-hover: #D9773F;
   --app-accent: #D9773F;
   --app-text: #262B36;
   --app-text-inverse: #ffffff;
-  --app-border: rgba(43, 58, 103, 0.16);
-  --app-border-strong: rgba(43, 58, 103, 0.26);
+  --app-border: rgba(44, 74, 59, 0.16);
+  --app-border-strong: rgba(44, 74, 59, 0.26);
   --app-focus: rgba(38, 43, 54, 0.35);
   --app-shadow: rgba(0, 0, 0, 0.12);
 }

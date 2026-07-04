@@ -28,12 +28,8 @@ import numpy_financial as npf
 
 import geopandas as gpd
 
-import yaml
-from yaml.loader import SafeLoader
-
 import streamlit as st
 import streamlit.components.v1 as components
-import streamlit_authenticator as stauth
 import folium
 from folium.plugins import FastMarkerCluster
 from streamlit_folium import st_folium
@@ -74,13 +70,12 @@ def auto_spinner(func):
     return wrapper
 
 # ========== COLORES / CONFIG ==========
-# Paleta "Navy & Coral": proposta sense ancorar-se a cap direcció anterior. Primary
-# (navy) i text (grafit) són colors DIFERENTS a propòsit (a "Ink & Amber" eren el
-# mateix to i això trencava el contrast quan un pill seleccionat quedava amb fons i
-# text idèntics sota una regla `!important` existent).
+# Paleta "Forest & Coral": mateixa estructura que "Navy & Coral" (primary i text
+# diferents a propòsit, veure el bug documentat a memòria), però amb el primary
+# en verd bosc en lloc de blau marí.
 CSS_COLORS = {
     "bg": "#FAF9F6",
-    "primary": "#2B3A67",
+    "primary": "#2C4A3B",
     "accent": "#D9773F",
     "text": "#262B36",
     "brand_dark": "#3F5C3F"
@@ -103,8 +98,8 @@ LIGHT_THEME = {
     "accent": CSS_COLORS["accent"],
     "text": CSS_COLORS["text"],
     "text-inverse": "#ffffff",
-    "border": "rgba(43, 58, 103, 0.16)",
-    "border-strong": "rgba(43, 58, 103, 0.26)",
+    "border": "rgba(44, 74, 59, 0.16)",
+    "border-strong": "rgba(44, 74, 59, 0.26)",
     "focus": "rgba(38, 43, 54, 0.35)",
     "shadow": "rgba(0, 0, 0, 0.12)",
 }
@@ -113,14 +108,14 @@ DARK_THEME = {
     "surface": "rgba(255, 255, 255, 0.06)",
     "surface-solid": "#1b2030",
     "table-alt": "#3a2818",
-    "primary": "#7c93c7",
-    "primary-hover": "#28324a",
-    "accent": "#28324a",
+    "primary": "#7fb08c",
+    "primary-hover": "#1e2e24",
+    "accent": "#1e2e24",
     "text": "#e7e9ee",
     "text-inverse": "#12151c",
-    "border": "rgba(124, 147, 199, 0.28)",
-    "border-strong": "rgba(124, 147, 199, 0.4)",
-    "focus": "rgba(124, 147, 199, 0.4)",
+    "border": "rgba(127, 176, 140, 0.28)",
+    "border-strong": "rgba(127, 176, 140, 0.4)",
+    "focus": "rgba(127, 176, 140, 0.4)",
     "shadow": "rgba(0, 0, 0, 0.5)",
 }
 THEMES = {"light": LIGHT_THEME, "dark": DARK_THEME}
