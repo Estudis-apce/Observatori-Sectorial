@@ -70,7 +70,7 @@ body { background-color: var(--app-bg); }
    que precedeixen la targeta. Es compensa amb un marge negatiu NOMÉS aquí, sense
    tocar el gap global (que afectaria tota la resta de l'app). */
 .element-container:has(.header-card-anchor) {
-  margin-top: -54px !important;
+  margin-top: -34px !important;
 }
 .element-container:has(.header-card-anchor) + div[data-testid="stVerticalBlockBorderWrapper"] {
   border: 1px solid var(--app-border) !important;
@@ -220,6 +220,45 @@ table tbody td {
 .download-button:hover {
   background-color: var(--app-primary-hover); /* hover */
   cursor: pointer; /* Change cursor to hand on hover */
+}
+
+/* ==========================================================================
+   BOTONS NATIUS DE STREAMLIT (st.button / st.download_button)
+   Mateix aspecte que .download-button (l'estil ja establert per als botons
+   HTML propis de filedownload/oferta_filedownload), perquè els pocs botons
+   natius de l'app (p. ex. "Descarregar informe PDF") no es vegin amb el
+   gris genèric de Streamlit.
+   ========================================================================== */
+[data-testid="stButton"] button,
+[data-testid="stDownloadButton"] button {
+  background-color: var(--app-primary);
+  color: var(--app-text-inverse);
+  border: none;
+  padding: 12px 24px;
+  font-size: 16px;
+  font-weight: bold;
+  border-radius: 4px;
+  transition: background-color 0.15s, color 0.15s;
+}
+/* Com amb els pills del menú: força l'herència de color en tots els
+   descendents perquè cap div/p intermedi de Streamlit el trenqui. */
+[data-testid="stButton"] button *,
+[data-testid="stDownloadButton"] button * {
+  color: inherit !important;
+}
+[data-testid="stButton"] button:hover,
+[data-testid="stButton"] button:focus,
+[data-testid="stDownloadButton"] button:hover,
+[data-testid="stDownloadButton"] button:focus {
+  background-color: var(--app-primary-hover);
+  color: var(--app-text-inverse);
+  border: none;
+  box-shadow: none;
+}
+[data-testid="stButton"] button:active,
+[data-testid="stDownloadButton"] button:active {
+  background-color: var(--app-primary-hover);
+  color: var(--app-text-inverse);
 }
 
 .custom-box {
@@ -478,7 +517,9 @@ div[data-testid="stMetric"]  label{
 [data-baseweb="select"] > div,
 [data-baseweb="popover"] ul,
 .stTextInput input,
-.stNumberInput input {
+.stNumberInput input,
+[data-testid="stDateInput"] [data-baseweb="input"],
+[data-testid="stDateInput"] input {
   background-color: var(--app-surface-solid) !important;
   color: var(--app-text) !important;
   border-color: var(--app-border) !important;
@@ -522,6 +563,33 @@ iframe[title="streamlit_folium.st_folium"] {
 }
 .element-container:has(.theme-toggle-anchor) + .element-container label {
   color: var(--app-text);
+}
+/* Icones sol/lluna a banda i banda de l'interruptor, sense el color propi
+   de l'emoji: es dibuixen amb mask-image (mateixa tècnica que --nav-icon)
+   perquè agafin el color neutre del tema en lloc del groc fix de l'emoji. */
+.element-container:has(.theme-toggle-anchor) + .element-container label[data-baseweb="checkbox"]::before {
+  content: "";
+  display: block;
+  order: -1;
+  width: 16px;
+  height: 16px;
+  margin-top: 4px;
+  margin-right: 8px;
+  flex-shrink: 0;
+  opacity: 0.75;
+  background-color: var(--app-text);
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='5'/%3E%3Cline x1='12' y1='1' x2='12' y2='3'/%3E%3Cline x1='12' y1='21' x2='12' y2='23'/%3E%3Cline x1='4.22' y1='4.22' x2='5.64' y2='5.64'/%3E%3Cline x1='18.36' y1='18.36' x2='19.78' y2='19.78'/%3E%3Cline x1='1' y1='12' x2='3' y2='12'/%3E%3Cline x1='21' y1='12' x2='23' y2='12'/%3E%3Cline x1='4.22' y1='19.78' x2='5.64' y2='18.36'/%3E%3Cline x1='18.36' y1='5.64' x2='19.78' y2='4.22'/%3E%3C/svg%3E") center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='5'/%3E%3Cline x1='12' y1='1' x2='12' y2='3'/%3E%3Cline x1='12' y1='21' x2='12' y2='23'/%3E%3Cline x1='4.22' y1='4.22' x2='5.64' y2='5.64'/%3E%3Cline x1='18.36' y1='18.36' x2='19.78' y2='19.78'/%3E%3Cline x1='1' y1='12' x2='3' y2='12'/%3E%3Cline x1='21' y1='12' x2='23' y2='12'/%3E%3Cline x1='4.22' y1='19.78' x2='5.64' y2='18.36'/%3E%3Cline x1='18.36' y1='5.64' x2='19.78' y2='4.22'/%3E%3C/svg%3E") center / contain no-repeat;
+}
+.element-container:has(.theme-toggle-anchor) + .element-container [data-testid="stMarkdownContainer"] p {
+  font-size: 0;
+  width: 16px;
+  height: 16px;
+  margin-top: 4px;
+  opacity: 0.75;
+  background-color: var(--app-text);
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z'/%3E%3C/svg%3E") center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z'/%3E%3C/svg%3E") center / contain no-repeat;
 }
 @media (max-width: 480px) {
   .element-container:has(.theme-toggle-anchor) + .element-container {
