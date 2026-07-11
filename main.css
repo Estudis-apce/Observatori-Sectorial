@@ -5,18 +5,18 @@
    dinàmic. */
 :root {
   color-scheme: light;
-  --app-bg: #FAF9F6;
+  --app-bg: #FDF9F2;
   --app-surface: rgba(255, 255, 255, 0.55);
   --app-surface-solid: #ffffff;
-  --app-table-alt: #D9773F;
-  --app-primary: #2C4A3B;
-  --app-primary-hover: #D9773F;
-  --app-accent: #D9773F;
-  --app-text: #262B36;
+  --app-table-alt: #E3A94C;
+  --app-primary: #C1571E;
+  --app-primary-hover: #E3A94C;
+  --app-accent: #E3A94C;
+  --app-text: #34231A;
   --app-text-inverse: #ffffff;
-  --app-border: rgba(44, 74, 59, 0.16);
-  --app-border-strong: rgba(44, 74, 59, 0.26);
-  --app-focus: rgba(38, 43, 54, 0.35);
+  --app-border: rgba(193, 87, 30, 0.18);
+  --app-border-strong: rgba(193, 87, 30, 0.28);
+  --app-focus: rgba(52, 35, 26, 0.35);
   --app-shadow: rgba(0, 0, 0, 0.12);
 }
 
@@ -201,7 +201,7 @@ table tbody td {
   text-decoration: none;
   display: inline-block;
   border: none;
-  border-radius: 4px;
+  border-radius: 9px;
 }
 
 .download-button {
@@ -211,7 +211,7 @@ table tbody td {
   padding: 12px 24px; /* Padding around text */
   font-size: 16px; /* Text size */
   font-weight: bold; /* Bold text */
-  border-radius: 4px;
+  border-radius: 9px;
   transition: all 0.3s ease; /* Smooth transition on hover */
   transition: background-color 0.15s,
   color 0.15s;
@@ -237,7 +237,7 @@ table tbody td {
   padding: 12px 24px;
   font-size: 16px;
   font-weight: bold;
-  border-radius: 4px;
+  border-radius: 9px;
   transition: background-color 0.15s, color 0.15s;
 }
 /* Com amb els pills del menú: força l'herència de color en tots els
@@ -454,6 +454,17 @@ div[data-testid="stMetric"]  label{
 .element-container:has(.menu-nav-anchor) + .element-container [role="radiogroup"] {
   display: grid;
   grid-template-columns: repeat(2, minmax(200px, 1fr));
+  /* Sense width:100% la graella s'encongeix al contingut (dins el flex del
+     Streamlit column) i deixa un buit gran entre l'última columna i la vora
+     de la targeta blanca del capçalera. */
+  width: 100%;
+}
+/* Les 2 columnes de la graella tenen el mateix ample (el que necessita
+   l'etiqueta més llarga, "Estudi d'oferta d'obra nova APCE"). Sense centrar,
+   les etiquetes més curtes ("Viabilitat financera") queden alineades a
+   l'esquerra i deixen un buit gran a la dreta dins la seva pròpia cel·la. */
+.element-container:has(.menu-nav-anchor) + .element-container [role="radiogroup"] > label {
+  justify-content: center;
 }
 @media (max-width: 760px) {
   .element-container:has(.menu-nav-anchor) + .element-container [role="radiogroup"] {
@@ -523,6 +534,21 @@ div[data-testid="stMetric"]  label{
   background-color: var(--app-surface-solid) !important;
   color: var(--app-text) !important;
   border-color: var(--app-border) !important;
+}
+/* Cada opció (<li role="option">) porta el seu propi color inline/de classe de
+   BaseWeb: hereta del <ul> de dalt però una coincidència directa sobre l'element
+   guanya sempre a l'herència, així que cal repetir-ho aquí explícitament o les
+   opcions no seleccionades queden il·legibles en mode fosc (text fosc sobre fons
+   fosc). */
+[data-baseweb="popover"] li,
+[data-baseweb="popover"] [role="option"] {
+  background-color: var(--app-surface-solid) !important;
+  color: var(--app-text) !important;
+}
+[data-baseweb="popover"] [role="option"]:hover,
+[data-baseweb="popover"] [role="option"][aria-selected="true"] {
+  background-color: var(--app-accent) !important;
+  color: var(--app-text) !important;
 }
 
 [data-testid="stMetric"] [data-testid="stMetricValue"],
@@ -638,6 +664,7 @@ html, body, [data-testid="stAppViewContainer"], section.main { scroll-behavior: 
 .viab-toc {
   display: flex;
   flex-wrap: wrap;
+  justify-content: center;
   gap: clamp(4px, 0.8vw, 8px);
   margin: 4px 0 20px 0;
 }
@@ -728,5 +755,91 @@ html, body, [data-testid="stAppViewContainer"], section.main { scroll-behavior: 
   width: fit-content;
   max-width: 100%;
   margin: 8px auto 24px;
+}
+
+/* ==========================================================================
+   EXPANDERS (st.expander) I TAULES EDITABLES (st.data_editor)
+   Sense estil propi fins ara: es veien com una caixa nativa de Streamlit,
+   sense cap relació visual amb la resta de l'app (targetes, pills, colors).
+   ========================================================================== */
+[data-testid="stExpander"] {
+  border: 1px solid var(--app-border) !important;
+  border-radius: 9px !important;
+  background: var(--app-surface-solid) !important;
+  box-shadow: 0 2px 10px var(--app-shadow);
+  overflow: hidden;
+  margin-bottom: 14px;
+}
+[data-testid="stExpander"] summary {
+  background-color: var(--app-accent);
+  justify-content: center;
+  padding: 10px 16px;
+  transition: background-color 0.15s;
+}
+[data-testid="stExpander"] summary:hover {
+  background-color: var(--app-accent);
+  filter: brightness(0.95);
+}
+[data-testid="stExpander"] summary [data-testid="stMarkdownContainer"] p {
+  font-weight: 700;
+  font-size: 15px;
+  color: var(--app-text);
+  text-align: center;
+}
+[data-testid="stExpander"] summary svg {
+  color: var(--app-text);
+}
+[data-testid="stExpander"] [data-testid="stExpanderDetails"] {
+  padding-top: 16px;
+}
+
+[data-testid="stDataFrame"] {
+  border: 1px solid var(--app-border) !important;
+  border-radius: 9px !important;
+  overflow: hidden;
+}
+
+/* ==========================================================================
+   BOTÓ "COMPARATIVA" (st.toggle a Comarques/Municipis/Districtes)
+   Mateix aspecte de pastilla que Venda/Lloguer just al costat: s'amaga
+   l'interruptor natiu i el <label> sencer es converteix en el botó, ple de
+   color de marca quan està actiu (mateixa tècnica que .menu-nav-anchor).
+   ========================================================================== */
+.element-container:has(.comparativa-toggle-anchor) + .element-container [data-testid="stCheckbox"] {
+  margin-top: 12px;
+}
+.element-container:has(.comparativa-toggle-anchor) + .element-container [data-testid="stCheckbox"] label {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 34px;
+  margin: 0;
+  padding: clamp(5px, 0.9vw, 8px) clamp(9px, 1.4vw, 14px);
+  border: 1px solid var(--app-border);
+  border-radius: 9px;
+  background: var(--app-surface);
+  color: var(--app-text);
+  cursor: pointer;
+  transition: background-color 0.15s, border-color 0.15s, color 0.15s;
+}
+.element-container:has(.comparativa-toggle-anchor) + .element-container [data-testid="stCheckbox"] label > div:first-child {
+  display: none;
+}
+.element-container:has(.comparativa-toggle-anchor) + .element-container [data-testid="stCheckbox"] label:hover {
+  background: var(--app-primary-hover);
+  border-color: var(--app-border-strong);
+}
+.element-container:has(.comparativa-toggle-anchor) + .element-container [data-testid="stCheckbox"] label:has(input:checked) {
+  background: var(--app-primary);
+  border-color: var(--app-primary);
+  color: var(--app-text-inverse);
+}
+.element-container:has(.comparativa-toggle-anchor) + .element-container [data-testid="stCheckbox"] label:has(input:checked) * {
+  color: inherit !important;
+}
+.element-container:has(.comparativa-toggle-anchor) + .element-container [data-testid="stCheckbox"] p {
+  font-weight: 700;
+  font-size: clamp(0.78rem, 0.7rem + 0.3vw, 0.95rem);
+  margin: 0;
 }
 

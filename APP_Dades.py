@@ -74,11 +74,11 @@ def auto_spinner(func):
 # diferents a propòsit, veure el bug documentat a memòria), però amb el primary
 # en verd bosc en lloc de blau marí.
 CSS_COLORS = {
-    "bg": "#FAF9F6",
-    "primary": "#2C4A3B",
-    "accent": "#D9773F",
-    "text": "#262B36",
-    "brand_dark": "#3F5C3F"
+    "bg": "#FDF9F2",
+    "primary": "#C1571E",
+    "accent": "#E3A94C",
+    "text": "#34231A",
+    "brand_dark": "#2F4A38"
 }
 
 # ========== TEMA CLAR / FOSC ==========
@@ -98,25 +98,25 @@ LIGHT_THEME = {
     "accent": CSS_COLORS["accent"],
     "text": CSS_COLORS["text"],
     "text-inverse": "#ffffff",
-    "border": "rgba(44, 74, 59, 0.16)",
-    "border-strong": "rgba(44, 74, 59, 0.26)",
-    "focus": "rgba(38, 43, 54, 0.35)",
+    "border": "rgba(193, 87, 30, 0.18)",
+    "border-strong": "rgba(193, 87, 30, 0.28)",
+    "focus": "rgba(52, 35, 26, 0.35)",
     "shadow": "rgba(0, 0, 0, 0.12)",
 }
 DARK_THEME = {
-    "bg": "#12151c",
-    "surface": "rgba(255, 255, 255, 0.06)",
-    "surface-solid": "#1b2030",
+    "bg": "#17130f",
+    "surface": "rgba(255, 255, 255, 0.08)",
+    "surface-solid": "#251d16",
     "table-alt": "#3a2818",
-    "primary": "#7fb08c",
-    "primary-hover": "#1e2e24",
-    "accent": "#1e2e24",
-    "text": "#e7e9ee",
-    "text-inverse": "#12151c",
-    "border": "rgba(127, 176, 140, 0.28)",
-    "border-strong": "rgba(127, 176, 140, 0.4)",
-    "focus": "rgba(127, 176, 140, 0.4)",
-    "shadow": "rgba(0, 0, 0, 0.5)",
+    "primary": "#e0975a",
+    "primary-hover": "#5a3518",
+    "accent": "#5a3518",
+    "text": "#f2e6d8",
+    "text-inverse": "#1a120b",
+    "border": "rgba(224, 151, 90, 0.32)",
+    "border-strong": "rgba(224, 151, 90, 0.46)",
+    "focus": "rgba(224, 151, 90, 0.4)",
+    "shadow": "rgba(0, 0, 0, 0.45)",
 }
 THEMES = {"light": LIGHT_THEME, "dark": DARK_THEME}
 
@@ -154,9 +154,9 @@ def st_plotly_chart(fig, **kwargs):
 
 GLOBAL_PALETTE = {
     "total": "#2d538f",
-    "segunda_ma": "#D9773F",
+    "segunda_ma": "#C1571E",
     "nou": "#1b7f3a",
-    "unifamiliar": "#D9773F",
+    "unifamiliar": "#C1571E",
     "plurifamiliar": "#1b7f3a",
 }
 
@@ -164,7 +164,7 @@ GLOBAL_PALETTE = {
 # 6 colors perquè els gràfics d'àrea amb 6 categories (superfície construïda:
 # fins a 50m2 ... més de 150m2) no repeteixin color entre la 1a/5a i 2a/6a
 # categoria (amb només 4 colors es confonien visualment).
-PLOTLY_PALETTE = ["#2d538f", "#D9773F", "#3F5C3F", "#6B6B6B", "#7A5C8E", "#C9A227"]
+PLOTLY_PALETTE = ["#2d538f", "#C1571E", "#2F4A38", "#6B6B6B", "#7A5C8E", "#C9A227"]
 PLOTLY_PALETTE_DEMOGRAFIA = ["#6495ED", "#7DF9FF", "#87CEEB", "#A7C7E7", "#FFA07A"]
 
 # Noms llargs (catalá) de les variables d'idescat_muns / df_mun_idescat, usats a la
@@ -1094,7 +1094,7 @@ def build_location_pdf_ordered(
 # ========== HELPERS EXTRA (ALTRES INDICADORS) ==========
 def mpl_donut(labels, values) -> bytes:
     fig, ax = _mpl_base()
-    donut_colors = ["#2d538f", "#D9773F", "#1b7f3a", "#6a3d9a", "#b15928", "#727375"][:len(labels)]
+    donut_colors = ["#2d538f", "#C1571E", "#1b7f3a", "#6a3d9a", "#b15928", "#727375"][:len(labels)]
     wedges, texts, autotexts = ax.pie(
         values, labels=labels, startangle=90, colors=donut_colors,
         wedgeprops=dict(width=0.45, edgecolor=CSS_COLORS["bg"]),
@@ -1390,79 +1390,104 @@ def generar_pdf_municipi_tot(
 
     # --------- COMPARATIVA AMB LA PROVÍNCIA I LA CAPITAL ---------
     # Contextualitza el municipi enfront de la seva província i de la capital de
-    # província: nivells (preus, lloguer) i variació anual (producció, compravendes),
-    # amb la diferència en cada cas.
+    # província, sempre amb xifres absolutes (no percentatges): volums (producció,
+    # compravendes) amb la quota que en representa el municipi, i nivells (preus,
+    # lloguer) amb la diferència en €.
     items_comp_prov = []
     try:
-        def _last_val_and_var(df_y, col):
+        def _last_val(df_y, col):
             if df_y is None or col not in df_y.columns:
-                return None, None
+                return None
             s = pd.to_numeric(df_y[col], errors="coerce").dropna()
             if s.empty:
-                return None, None
-            last_val = float(s.iloc[-1])
-            var_pct = None
-            if len(s) >= 2:
-                prev_val = float(s.iloc[-2])
-                if prev_val:
-                    var_pct = (last_val / prev_val - 1.0) * 100.0
-            return last_val, var_pct
+                return None
+            return float(s.iloc[-1])
+
+        def _fmt_num(v):
+            return f"{v:,.0f}".replace(",", ".") if v is not None else "n/d"
 
         def _fmt_eur(v):
             return f"{v:,.0f} €".replace(",", ".") if v is not None else "n/d"
 
-        def _fmt_pct(v):
-            return f"{v:+.1f}%".replace(".", ",") if v is not None else "n/d"
-
-        def _fmt_pp(v):
+        def _fmt_eur_diff(v):
             if v is None:
                 return "n/d"
-            return f"{v:+.1f}".replace(".", ",") + " p.p."
+            sign = "+" if v >= 0 else "−"
+            return f"{sign}{abs(v):,.0f} €".replace(",", ".")
 
-        def _row_var(label, table_mun, table_other, col):
-            _, var_mun = _last_val_and_var(table_mun, col)
-            _, var_other = _last_val_and_var(table_other, col)
-            diff = (var_mun - var_other) if (var_mun is not None and var_other is not None) else None
-            return (label, _fmt_pct(var_mun), _fmt_pct(var_other), _fmt_pp(diff))
+        def _fmt_share_pct(v):
+            return f"{v:.1f}%".replace(".", ",") if v is not None else "n/d"
+
+        def _row_volume(label, table_mun, table_other, col):
+            val_mun = _last_val(table_mun, col)
+            val_other = _last_val(table_other, col)
+            # Pes del municipi sobre el conjunt: una diferència absoluta entre un
+            # municipi i tota la seva província no aporta res (l'escala sempre és
+            # molt més gran), però el % que hi representa sí és llegible — a
+            # diferència del % de variació anual, aquest és estable (quota, no
+            # creixement), s'explica a la nota sota el títol de cada taula.
+            share_pct = None
+            if val_mun is not None and val_other:
+                share_pct = (val_mun / val_other) * 100.0
+            return (label, _fmt_num(val_mun), _fmt_num(val_other), _fmt_share_pct(share_pct))
 
         def _row_level(label, table_mun, table_other, col):
-            val_mun, _ = _last_val_and_var(table_mun, col)
-            val_other, _ = _last_val_and_var(table_other, col)
-            diff = (val_mun / val_other - 1.0) * 100.0 if (val_mun is not None and val_other) else None
-            return (label, _fmt_eur(val_mun), _fmt_eur(val_other), _fmt_pct(diff))
+            val_mun = _last_val(table_mun, col)
+            val_other = _last_val(table_other, col)
+            diff = (val_mun - val_other) if (val_mun is not None and val_other is not None) else None
+            return (label, _fmt_eur(val_mun), _fmt_eur(val_other), _fmt_eur_diff(diff))
 
         def _build_comp_df(other_label, prod_y, tr_y, pr_y, llog_y):
             rows = [
-                _row_var("Habitatges iniciats (variació anual)", table_mun_prod_y, prod_y, "Habitatges iniciats"),
-                _row_var("Habitatges acabats (variació anual)", table_mun_prod_y, prod_y, "Habitatges acabats"),
-                _row_var("Compravendes (variació anual)", table_mun_tr_y, tr_y, "Compravendes d'habitatge total"),
+                _row_volume("Habitatges iniciats", table_mun_prod_y, prod_y, "Habitatges iniciats"),
+                _row_volume("Habitatges acabats", table_mun_prod_y, prod_y, "Habitatges acabats"),
+                _row_volume("Compravendes", table_mun_tr_y, tr_y, "Compravendes d'habitatge total"),
                 _row_level("Preu €/m² (total)", table_mun_pr_y, pr_y, "Preu d'habitatge total"),
                 _row_level("Preu €/m² (segona mà)", table_mun_pr_y, pr_y, "Preu d'habitatge de segona mà"),
                 _row_level("Preu €/m² (nou)", table_mun_pr_y, pr_y, "Preu d'habitatge nou"),
                 _row_level("Renda mitjana de lloguer (€/mes)", table_mun_llog_y, llog_y, "Rendes mitjanes de lloguer"),
             ]
             return pd.DataFrame(
-                rows, columns=["Indicador", selected_mun, other_label, "Diferència"]
+                rows, columns=["Indicador", selected_mun, other_label, "Comparativa"]
             ).set_index("Indicador")
 
+        # Nota: la capital de província comparteix nom amb la província a Catalunya
+        # (p. ex. Martorell → "Província de Barcelona" I "Barcelona (capital)" —
+        # les dues taules dirien "Barcelona" si no es distingeix bé). Per això
+        # cada capçalera de columna i cada títol precisen explícitament si es
+        # tracta del conjunt de la província o només de la ciutat capital.
         if selected_prov and table_prov_prod_y is not None:
             df_comp_prov = _build_comp_df(
-                f"Província de {selected_prov}",
+                f"Província de {selected_prov} (conjunt)",
                 table_prov_prod_y, table_prov_tr_y, table_prov_pr_y, table_prov_llog_y
             )
             items_comp_prov.append((
                 "table",
-                (f"Comparativa de {selected_mun} amb la província de {selected_prov} (últim any disponible)", df_comp_prov)
+                (
+                    f"Comparativa de {selected_mun} amb la província de {selected_prov} (últim any disponible)"
+                    f'<br/><font size="9" color="#777777">Mitjana/suma del conjunt de tots els municipis '
+                    f"de la província de {selected_prov}, incloent-hi la capital. A «Comparativa»: pes del "
+                    f"municipi sobre el conjunt provincial (%) a producció/compravendes, o diferència en € "
+                    f"a preus/lloguer.</font>",
+                    df_comp_prov
+                )
             ))
 
         if selected_capital and table_cap_prod_y is not None:
             df_comp_cap = _build_comp_df(
-                f"Capital: {selected_capital}",
+                f"{selected_capital} (capital)",
                 table_cap_prod_y, table_cap_tr_y, table_cap_pr_y, table_cap_llog_y
             )
             items_comp_prov.append((
                 "table",
-                (f"Comparativa de {selected_mun} amb la capital de província ({selected_capital})", df_comp_cap)
+                (
+                    f"Comparativa de {selected_mun} amb la capital de província ({selected_capital})"
+                    f'<br/><font size="9" color="#777777">Dades específiques del municipi capital '
+                    f"({selected_capital}), no del conjunt de la província. A «Comparativa»: pes del "
+                    f"municipi respecte a la capital (%) a producció/compravendes, o diferència en € "
+                    f"a preus/lloguer.</font>",
+                    df_comp_cap
+                )
             ))
     except Exception:
         pass
@@ -1617,7 +1642,7 @@ def generar_pdf_municipi_tot(
     try:
         items_comp.append((
             "table",
-            (f"Evolució anual de les compravendes al municipi de  {selected_mun}",
+            (f"Evolució anual de les compravendes al municipi de {selected_mun}",
              table_year(table_mun_tr_y, TABLE_ANNUAL_START_YEAR, rounded=False))
         ))
     except Exception:
@@ -1862,7 +1887,7 @@ def generar_pdf_municipi_tot(
             # KPIs adicionales
             try:
                 kpis_pdf.append(("Grandària de la llar més freqüent", f"{row['Tamaño_hogar_frecuente']}", None))
-                kpis_pdf.append(("Grandària mitjà de la llar", f"{float(row['Tamaño medio del hogar']):.2f}", None))
+                kpis_pdf.append(("Grandària mitjana de la llar", f"{float(row['Tamaño medio del hogar']):.2f}", None))
                 kpis_pdf.append(("Població nacional", f"{(100.0 - float(row['Perc_extranjera'])):.1f}%", None))
                 kpis_pdf.append(("Població estrangera", f"{float(row['Perc_extranjera']):.1f}%", None))
             except Exception:
@@ -2104,7 +2129,7 @@ with st.container(border=True):
         st.markdown('<div class="menu-nav-anchor"></div>', unsafe_allow_html=True)
         selected_top = st.radio(
             "Menú principal",
-            ["Indicadors Territorials", "Estudi d'oferta d'obra nova APCE", "Informe de mercat i sectorial", "Viabilitat financera"],
+            ["Indicadors Territorials", "Estudi d'Oferta Obra Nova", "Informe de Mercat i Sectorial", "Viabilitat Financera"],
             horizontal=True,
             label_visibility="collapsed",
         )
@@ -2565,9 +2590,58 @@ def _build_download_href(df, filename):
     # DataFrame i el nom del fitxer, per no regenerar l'Excel a cada rerun quan
     # les dades no han canviat. Es converteix a numèric perquè Excel ho tracti
     # com a números i s'hi puguin aplicar fórmules directament.
+    from openpyxl.styles import Font, PatternFill, Alignment, Border
+    from openpyxl.utils import get_column_letter
+
     df = df.copy().apply(_try_num_col)
+    # table_trim() retorna columnes en MultiIndex (Any, Trimestre): 2 files de
+    # capçalera en lloc d'1. Es detecta per estilitzar-les/fixar-les totes.
+    header_rows = getattr(df.columns, "nlevels", 1)
+    sheet_name = re.sub(r'[\\/*?:\[\]]', "_", filename.rsplit(".", 1)[0])[:31] or "Dades"
+
+    BRAND_FILL = PatternFill(start_color="C1571E", end_color="C1571E", fill_type="solid")
+    BRAND_FONT = Font(color="FFFFFF", bold=True)
+    ZEBRA_FILL = PatternFill(start_color="E3A94C", end_color="E3A94C", fill_type="solid")
+    WHITE_FILL = PatternFill(start_color="FFFFFF", end_color="FFFFFF", fill_type="solid")
+    CENTER = Alignment(horizontal="center", vertical="center")
+    NO_BORDER = Border()
+
     towrite = io.BytesIO()
-    df.to_excel(towrite, index=True, header=True)
+    with pd.ExcelWriter(towrite, engine="openpyxl") as writer:
+        df.to_excel(writer, sheet_name=sheet_name, index=True, header=True)
+        ws = writer.sheets[sheet_name]
+        # pandas afegeix una fila buida just després d'una capçalera de columnes
+        # MultiIndex (Any/Trimestre a table_trim): es descarta si és realment buida.
+        if header_rows > 1 and all(ws.cell(header_rows + 1, c).value is None for c in range(1, ws.max_column + 1)):
+            ws.delete_rows(header_rows + 1, 1)
+        data_start = header_rows + 1
+        for row in ws.iter_rows(min_row=1, max_row=header_rows):
+            for cell in row:
+                cell.fill = BRAND_FILL
+                cell.font = BRAND_FONT
+        # Noms dels indicadors (columna A, sota la capçalera): mateix estil que la 1a/2a fila.
+        for row in ws.iter_rows(min_row=data_start, max_row=ws.max_row, min_col=1, max_col=1):
+            for cell in row:
+                cell.fill = BRAND_FILL
+                cell.font = BRAND_FONT
+        for row_idx in range(data_start, ws.max_row + 1):
+            for col_idx in range(2, ws.max_column + 1):
+                cell = ws.cell(row_idx, col_idx)
+                if isinstance(cell.value, (int, float)):
+                    cell.number_format = "#,##0"
+                cell.fill = ZEBRA_FILL if (row_idx - data_start) % 2 == 1 else WHITE_FILL
+        # Sense vores enlloc (evita els divisors negres per defecte d'algunes graelles).
+        for row in ws.iter_rows(min_row=1, max_row=ws.max_row):
+            for cell in row:
+                cell.alignment = CENTER
+                cell.border = NO_BORDER
+        # Columnes fusionades (capçalera "Any" a table_trim) trenquen col_cells[0].column_letter
+        # perquè les MergedCell no tenen aquest atribut: cal l'índex de columna explícit.
+        for col_idx in range(1, ws.max_column + 1):
+            letter = get_column_letter(col_idx)
+            max_len = max((len(str(ws.cell(r, col_idx).value)) for r in range(1, ws.max_row + 1) if ws.cell(r, col_idx).value is not None), default=8)
+            ws.column_dimensions[letter].width = min(max(max_len + 2, 10), 40)
+        ws.freeze_panes = f"B{data_start}"
     towrite.seek(0)
     b64 = base64.b64encode(towrite.read()).decode("latin-1")
     return f"""<a href="data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,{b64}" download="{filename}">
@@ -2700,6 +2774,68 @@ def stacked_bar_plotly(table_n, selection_n, title_main, title_y, year_ini, year
 
     fig = go.Figure(data=traces, layout=layout)
     return fig
+
+# ==========================================================================
+# COMPARATIVA MULTI-UBICACIÓ (Comarques / Municipis / Districtes de Barcelona)
+# A diferència de la resta de l'app (una sola ubicació, mètriques en columnes),
+# aquí es compara UNA mètrica entre N ubicacions: les ubicacions passen a ser
+# les columnes (per graficar, reutilitzant line_plotly/bar_plotly tal qual) o
+# les files (per a les taules de pantalla/descàrrega, via .T).
+# ==========================================================================
+def comparativa_build_frames(prefixes, locations, col_names, min_year, annual=False, df_quarterly=None, df_annual=None):
+    """Per cada ubicació, construeix la mateixa taula (tidy_Catalunya/_anual) que ja
+    fan servir les seccions d'una sola ubicació, com a pas previ per combinar-les
+    mètrica a mètrica amb comparativa_metric_table()."""
+    df_quarterly = df_quarterly if df_quarterly is not None else DT_terr
+    df_annual = df_annual if df_annual is not None else DT_terr_y
+    frames = {}
+    for loc in locations:
+        cols_sel = concatenate_lists(prefixes, loc)
+        if annual:
+            upper = annual_upper_bound(f"{prefixes[0]}{loc}", df_annual=df_annual, df_quarterly=df_quarterly)
+            frames[loc] = tidy_Catalunya_anual(df_annual, ["Fecha"] + cols_sel, min_year, upper, ["Any"] + col_names)
+        else:
+            frames[loc] = tidy_Catalunya(df_quarterly, ["Fecha"] + cols_sel, f"{min_year}-01-01", f"{max_year}-12-31", ["Data"] + col_names)
+    return frames
+
+def comparativa_metric_table(frames, metric):
+    """De {ubicació: dataframe(mètriques)} a una única taula amb columnes = ubicacions,
+    per a una mètrica concreta (índex = Trimestre o Any segons `frames`)."""
+    return pd.DataFrame({loc: df[metric] for loc, df in frames.items() if metric in df.columns})
+
+def comparativa_style_table(df, precision=0):
+    """Mateix format espanyol (milers amb punt, decimals amb coma) que format_dataframes(),
+    aplicat a una taula ja transposada (files=ubicacions, columnes=període)."""
+    return df.style.format(thousands=".", decimal=",", precision=precision)
+
+def comparativa_display_trim(t_trim, year_ini="2021"):
+    """Retalla la taula trimestral (índex 'AAAATn') per a la PANTALLA, igual que
+    table_trim(any_ini) fa a la resta de l'app: la descàrrega manté tot l'històric
+    (t_trim sencer), només la vista en pantalla comença a `year_ini`."""
+    return t_trim[t_trim.index >= f"{year_ini}T1"]
+
+def bar_plotly_comparativa_anys(table_y, title_main, title_y_axis, year_actual, year_previous):
+    """Barres agrupades PER UBICACIÓ (cada ubicació = 2 barres: any anterior/actual).
+    A diferència de bar_plotly (x=Any, una barra per mètrica), aquí x=ubicació i
+    cada any és una sèrie de color."""
+    years = [str(y) for y in (year_previous, year_actual) if str(y) in table_y.index]
+    colors = ["#c9c9c9", PLOTLY_PALETTE[0]]
+    traces = []
+    for i, y in enumerate(years):
+        row = table_y.loc[y]
+        traces.append(go.Bar(x=row.index.tolist(), y=row.values, name=y, marker=dict(color=colors[i % len(colors)])))
+    layout = _plotly_layout(title_main, title_y_axis, barmode="group")
+    return go.Figure(data=traces, layout=layout)
+
+def bar_plotly_comparativa_100(serie_a, serie_b, label_a, label_b, title_main, year_label):
+    """100% apilat per ubicació (p. ex. proporció segona mà vs obra nova de compravendes)."""
+    traces = [
+        go.Bar(x=serie_a.index.tolist(), y=serie_a.values, name=label_a, marker=dict(color=PLOTLY_PALETTE[0])),
+        go.Bar(x=serie_b.index.tolist(), y=serie_b.values, name=label_b, marker=dict(color=PLOTLY_PALETTE[1])),
+    ]
+    layout = _plotly_layout(f"{title_main} ({year_label})", "%", barmode="stack", tickformat=",.0f")
+    return go.Figure(data=traces, layout=layout)
+
 @st.cache_data(show_spinner=False)
 def area_plotly(table_n, selection_n, title_main, title_y, trim):
     plot_cat = table_n[table_n.index>=trim][selection_n]
@@ -2926,7 +3062,7 @@ def folium_mapa_municipis(map_df, any, name_var):
             sticky=False,
         ),
         style_function=lambda x: {"fillOpacity": 0, "weight": 0.35, "color": "#444444"},
-        highlight_function=lambda x: {"weight": 2, "color": "#D9773F", "fillOpacity": 0.18},
+        highlight_function=lambda x: {"weight": 2, "color": "#C1571E", "fillOpacity": 0.18},
     ).add_to(m)
     folium.LayerControl(collapsed=False).add_to(m)
     return m
@@ -2997,44 +3133,53 @@ def _viab_default_curves(quarters):
         values = list(values) + [0.0] * (n - len(values))
         return values[:n]
     curves = pd.DataFrame({
-        "EVOLUCIÓN DE LA CONSTRUCCIÓN": _pad([0.05, 0.10, 0.20, 0.25, 0.25, 0.15]),
-        "EVOLUCIÓN DE LAS VENTAS": _pad([0.15, 0.15, 0.10, 0.10, 0.10, 0.10, 0.10, 0.10, 0.05, 0.05]),
-        "SOLAR": _pad([1.0]),
-        "ADMINISTRACIÓN PROMOCIÓN": _pad([0.05, 0.10, 0.20, 0.25, 0.25, 0.15]),
-        "COMERCIALIZACIÓN DE LA PROMOCIÓN": _pad([0.15, 0.15, 0.10, 0.10, 0.10, 0.10, 0.10, 0.10, 0.05, 0.05]),
-        "IVA SOLAR": _pad([1.0]),
-        "IVA VENTAS": _pad([0.15, 0.15, 0.10, 0.10, 0.10, 0.10, 0.10, 0.10, 0.05, 0.05]),
-        "GASTOS DE CONSTITUCIÓN": _pad([0.0, 0.0, 1.0]),
+        "EVOLUCIÓ DE LA CONSTRUCCIÓ": _pad([0.05, 0.10, 0.20, 0.25, 0.25, 0.15]),
+        "EVOLUCIÓ DE LES VENDES": _pad([0.15, 0.15, 0.10, 0.10, 0.10, 0.10, 0.10, 0.10, 0.05, 0.05]),
+        "SÒL": _pad([1.0]),
+        "ADMINISTRACIÓ DE LA PROMOCIÓ": _pad([0.05, 0.10, 0.20, 0.25, 0.25, 0.15]),
+        "COMERCIALITZACIÓ DE LA PROMOCIÓ": _pad([0.15, 0.15, 0.10, 0.10, 0.10, 0.10, 0.10, 0.10, 0.05, 0.05]),
+        "IVA SÒL": _pad([1.0]),
+        "IVA VENDES": _pad([0.15, 0.15, 0.10, 0.10, 0.10, 0.10, 0.10, 0.10, 0.05, 0.05]),
+        "DESPESES DE CONSTITUCIÓ": _pad([0.0, 0.0, 1.0]),
     }, index=quarters).T
     return curves
 
 def _viab_calcul_estatic(mode, superficie_construida, preciom2, costem2, tipo_interes,
-                          rentabilidad_pct=None, preu_solar_manual=None, intereses_hipoteca=0.0):
+                          rentabilidad_pct=None, preu_solar_manual=None, intereses_hipoteca=0.0,
+                          recursos_propis_pct=VIAB_RECURSOS_PROPIS_PCT, credit_pct=VIAB_CREDIT_PCT,
+                          otros_solar_pct=VIAB_OTROS_SOLAR_PCT, honoraris_pct=VIAB_HONORARIS_PCT,
+                          llicencies_pct=VIAB_LLICENCIES_PCT, gastos_legals_pct=VIAB_GASTOS_LEGALS_PCT,
+                          altres_edif_pct=VIAB_ALTRES_EDIF_PCT, admin_promocio_pct=VIAB_ADMIN_PROMOCIO_PCT,
+                          comercialitzacio_pct=VIAB_COMERCIALITZACIO_PCT,
+                          gastos_constitucio_pct=VIAB_GASTOS_CONSTITUCIO_PCT):
     """Càlcul estàtic (comptes de resultats) sense financiació encara resolta
     del tot: retorna els totals de gastos/ingressos/BAII i, si ja es coneixen
     els interessos (segona passada, després del dinàmic), també el BAI.
-    mode: "rentabilitat" o "preu_solar" (els dos mètodes de l'original)."""
+    mode: "rentabilitat" o "preu_solar" (els dos mètodes de l'original).
+    Els *_pct tenen com a valor per defecte les constants VIAB_* (hipòtesis
+    fixes originals), però l'usuari els pot sobreescriure des del panell
+    "Hipòtesis i percentatges" de la UI."""
     ingresos = preciom2 * superficie_construida
     edificacion1 = costem2 * superficie_construida
-    edificacion2 = VIAB_HONORARIS_PCT * edificacion1
-    edificacion3 = VIAB_LLICENCIES_PCT * edificacion1
-    edificacion4 = VIAB_GASTOS_LEGALS_PCT * edificacion1
-    edificacion5 = VIAB_ALTRES_EDIF_PCT * edificacion1
-    admin1 = VIAB_ADMIN_PROMOCIO_PCT * edificacion1
-    admin2 = VIAB_COMERCIALITZACIO_PCT * ingresos
+    edificacion2 = honoraris_pct * edificacion1
+    edificacion3 = llicencies_pct * edificacion1
+    edificacion4 = gastos_legals_pct * edificacion1
+    edificacion5 = altres_edif_pct * edificacion1
+    admin1 = admin_promocio_pct * edificacion1
+    admin2 = comercialitzacio_pct * ingresos
     total_edificacion = edificacion1 + edificacion2 + edificacion3 + edificacion4 + edificacion5
 
     if mode == "rentabilitat":
-        solar1 = ((ingresos / (1 + (rentabilidad_pct / 100))) - total_edificacion - admin1 - admin2) / (1 + VIAB_OTROS_SOLAR_PCT)
+        solar1 = ((ingresos / (1 + (rentabilidad_pct / 100))) - total_edificacion - admin1 - admin2) / (1 + otros_solar_pct)
     else:
         solar1 = preu_solar_manual
-    solar2 = VIAB_OTROS_SOLAR_PCT * solar1
+    solar2 = otros_solar_pct * solar1
     total_solar = solar1 + solar2
 
     total_gastos = total_solar + total_edificacion + admin1 + admin2
     baii = ingresos - total_gastos
 
-    gastos_constitucio = VIAB_GASTOS_CONSTITUCIO_PCT * VIAB_CREDIT_PCT * ingresos
+    gastos_constitucio = gastos_constitucio_pct * credit_pct * ingresos
     total_financiacio = intereses_hipoteca + gastos_constitucio
     bai = baii - total_financiacio
 
@@ -3044,76 +3189,78 @@ def _viab_calcul_estatic(mode, superficie_construida, preciom2, costem2, tipo_in
         "edificacion4": edificacion4, "edificacion5": edificacion5, "total_edificacion": total_edificacion,
         "admin1": admin1, "admin2": admin2, "total_gastos": total_gastos, "baii": baii,
         "gastos_constitucio": gastos_constitucio, "total_financiacio": total_financiacio, "bai": bai,
-        "recursos_propis": VIAB_RECURSOS_PROPIS_PCT * ingresos, "credit_concedit": VIAB_CREDIT_PCT * ingresos,
+        "recursos_propis": recursos_propis_pct * ingresos, "credit_concedit": credit_pct * ingresos,
     }
 
-def _viab_calcul_dinamic(estatic, curves, quarters, tipo_interes):
+def _viab_calcul_dinamic(estatic, curves, quarters, tipo_interes,
+                          iva_solar_pct=VIAB_IVA_SOLAR_PCT, iva_edificacio_pct=VIAB_IVA_EDIFICACIO_PCT,
+                          credit_pct=VIAB_CREDIT_PCT):
     """Taula de cash flows trimestrals (10 columnes T0..T9), replicant
     exactament l'ordre de càlcul de l'original (disposició de crèdit des de
     T2, amortització T6-T9). `curves` és un DataFrame (files=conceptes,
     columnes=quarters) amb pesos que sumen 1.0 per fila."""
     tasa_trim = (tipo_interes / 100) / 4
     df = pd.DataFrame(index=[
-        "EVOLUCIÓN DE LAS VENTAS", "IVA VENTAS", "SOLAR", "EDIFICACIÓN",
-        "ADMINISTRACIÓN PROMOCIÓN", "COMERCIALIZACIÓN DE LA PROMOCIÓN", "IVA SOLAR",
-        "GASTOS DE CONSTITUCIÓN",
+        "EVOLUCIÓ DE LES VENDES", "IVA VENDES", "SÒL", "EDIFICACIÓ",
+        "ADMINISTRACIÓ DE LA PROMOCIÓ", "COMERCIALITZACIÓ DE LA PROMOCIÓ", "IVA SÒL",
+        "DESPESES DE CONSTITUCIÓ",
     ], columns=quarters, dtype=float)
 
-    df.loc["EVOLUCIÓN DE LAS VENTAS"] = curves.loc["EVOLUCIÓN DE LAS VENTAS"] * estatic["ingresos"]
-    df.loc["IVA VENTAS"] = curves.loc["IVA VENTAS"] * (VIAB_IVA_EDIFICACIO_PCT * estatic["edificacion1"])
-    df.loc["SOLAR"] = curves.loc["SOLAR"] * estatic["total_solar"]
-    df.loc["EDIFICACIÓN"] = curves.loc["EVOLUCIÓN DE LA CONSTRUCCIÓN"] * estatic["total_edificacion"]
-    df.loc["ADMINISTRACIÓN PROMOCIÓN"] = curves.loc["ADMINISTRACIÓN PROMOCIÓN"] * estatic["admin1"]
-    df.loc["COMERCIALIZACIÓN DE LA PROMOCIÓN"] = curves.loc["COMERCIALIZACIÓN DE LA PROMOCIÓN"] * estatic["admin2"]
-    df.loc["IVA SOLAR"] = curves.loc["IVA SOLAR"] * (VIAB_IVA_SOLAR_PCT * estatic["solar1"])
-    df.loc["GASTOS DE CONSTITUCIÓN"] = curves.loc["GASTOS DE CONSTITUCIÓN"] * estatic["gastos_constitucio"]
+    df.loc["EVOLUCIÓ DE LES VENDES"] = curves.loc["EVOLUCIÓ DE LES VENDES"] * estatic["ingresos"]
+    df.loc["IVA VENDES"] = curves.loc["IVA VENDES"] * (iva_edificacio_pct * estatic["edificacion1"])
+    df.loc["SÒL"] = curves.loc["SÒL"] * estatic["total_solar"]
+    df.loc["EDIFICACIÓ"] = curves.loc["EVOLUCIÓ DE LA CONSTRUCCIÓ"] * estatic["total_edificacion"]
+    df.loc["ADMINISTRACIÓ DE LA PROMOCIÓ"] = curves.loc["ADMINISTRACIÓ DE LA PROMOCIÓ"] * estatic["admin1"]
+    df.loc["COMERCIALITZACIÓ DE LA PROMOCIÓ"] = curves.loc["COMERCIALITZACIÓ DE LA PROMOCIÓ"] * estatic["admin2"]
+    df.loc["IVA SÒL"] = curves.loc["IVA SÒL"] * (iva_solar_pct * estatic["solar1"])
+    df.loc["DESPESES DE CONSTITUCIÓ"] = curves.loc["DESPESES DE CONSTITUCIÓ"] * estatic["gastos_constitucio"]
 
-    df.loc["CASH FLOW ANTES FINANCIACIÓN"] = (
-        df.loc["EVOLUCIÓN DE LAS VENTAS"] + df.loc["IVA VENTAS"]
-        - df.loc["SOLAR"] - df.loc["EDIFICACIÓN"] - df.loc["ADMINISTRACIÓN PROMOCIÓN"]
-        - df.loc["COMERCIALIZACIÓN DE LA PROMOCIÓN"] - df.loc["IVA SOLAR"]
+    df.loc["CASH FLOW ABANS DE FINANÇAMENT"] = (
+        df.loc["EVOLUCIÓ DE LES VENDES"] + df.loc["IVA VENDES"]
+        - df.loc["SÒL"] - df.loc["EDIFICACIÓ"] - df.loc["ADMINISTRACIÓ DE LA PROMOCIÓ"]
+        - df.loc["COMERCIALITZACIÓ DE LA PROMOCIÓ"] - df.loc["IVA SÒL"]
     )
-    df.loc["CASH FLOW ANTES FINANCIACIÓN ACUM"] = df.loc["CASH FLOW ANTES FINANCIACIÓN"].cumsum()
+    df.loc["CASH FLOW ABANS DE FINANÇAMENT ACUM"] = df.loc["CASH FLOW ABANS DE FINANÇAMENT"].cumsum()
 
-    for row in ["CREDITO UTILIZADO", "INTERESES SOBRE EL SALDO VIVO", "SALDO VIVO DEL CRÉDITO", "DEVOLUCIONES DEL PRINCIPAL"]:
+    for row in ["CRÈDIT UTILITZAT", "INTERESSOS SOBRE EL SALDO VIU", "SALDO VIU DEL CRÈDIT", "DEVOLUCIONS DEL PRINCIPAL"]:
         df.loc[row] = np.nan
 
     cols = quarters  # cols[2] = T2, etc. (igual que l'original: la disposició de crèdit comença al 3r trimestre)
-    df.loc["CREDITO UTILIZADO", cols[2]] = (
-        -df.loc["CASH FLOW ANTES FINANCIACIÓN ACUM", cols[2]] + df.loc["GASTOS DE CONSTITUCIÓN", cols[2]]
+    df.loc["CRÈDIT UTILITZAT", cols[2]] = (
+        -df.loc["CASH FLOW ABANS DE FINANÇAMENT ACUM", cols[2]] + df.loc["DESPESES DE CONSTITUCIÓ", cols[2]]
         - estatic["recursos_propis"]
     ) / (1 - tasa_trim)
-    df.loc["INTERESES SOBRE EL SALDO VIVO", cols[2]] = tasa_trim * df.loc["CREDITO UTILIZADO", cols[2]]
-    df.loc["SALDO VIVO DEL CRÉDITO", cols[2]] = df.loc["CREDITO UTILIZADO", cols[2]]
+    df.loc["INTERESSOS SOBRE EL SALDO VIU", cols[2]] = tasa_trim * df.loc["CRÈDIT UTILITZAT", cols[2]]
+    df.loc["SALDO VIU DEL CRÈDIT", cols[2]] = df.loc["CRÈDIT UTILITZAT", cols[2]]
 
     for i in [3, 4, 5]:
-        df.loc["CREDITO UTILIZADO", cols[i]] = (
-            -df.loc["CASH FLOW ANTES FINANCIACIÓN", cols[i]] + df.loc["INTERESES SOBRE EL SALDO VIVO", cols[i-1]]
+        df.loc["CRÈDIT UTILITZAT", cols[i]] = (
+            -df.loc["CASH FLOW ABANS DE FINANÇAMENT", cols[i]] + df.loc["INTERESSOS SOBRE EL SALDO VIU", cols[i-1]]
         ) / (1 - tasa_trim)
-        df.loc["SALDO VIVO DEL CRÉDITO", cols[i]] = df.loc["CREDITO UTILIZADO", :cols[i]].dropna().sum()
-        df.loc["INTERESES SOBRE EL SALDO VIVO", cols[i]] = tasa_trim * df.loc["CREDITO UTILIZADO", cols[i]]
+        df.loc["SALDO VIU DEL CRÈDIT", cols[i]] = df.loc["CRÈDIT UTILITZAT", :cols[i]].dropna().sum()
+        df.loc["INTERESSOS SOBRE EL SALDO VIU", cols[i]] = tasa_trim * df.loc["CRÈDIT UTILITZAT", cols[i]]
 
     for i in [6, 7, 8, 9]:
-        df.loc["SALDO VIVO DEL CRÉDITO", cols[i]] = 0
-        df.loc["INTERESES SOBRE EL SALDO VIVO", cols[i]] = 0
+        df.loc["SALDO VIU DEL CRÈDIT", cols[i]] = 0
+        df.loc["INTERESSOS SOBRE EL SALDO VIU", cols[i]] = 0
 
-    df.loc["DEVOLUCIONES DEL PRINCIPAL", cols[6]] = VIAB_CREDIT_PCT * df.loc["EVOLUCIÓN DE LAS VENTAS", :cols[6]].dropna().sum()
+    df.loc["DEVOLUCIONS DEL PRINCIPAL", cols[6]] = credit_pct * df.loc["EVOLUCIÓ DE LES VENDES", :cols[6]].dropna().sum()
     for i in [7, 8]:
-        df.loc["DEVOLUCIONES DEL PRINCIPAL", cols[i]] = VIAB_CREDIT_PCT * df.loc["EVOLUCIÓN DE LAS VENTAS", cols[i]]
+        df.loc["DEVOLUCIONS DEL PRINCIPAL", cols[i]] = credit_pct * df.loc["EVOLUCIÓ DE LES VENDES", cols[i]]
     # cols[9] (DEVOLUCIONES) es queda a NaN de moment, igual que a l'original: es
     # completa amb el fillna(0) de sota (l'última quota no es reparteix explícitament).
     for i in [6, 7, 8, 9]:
-        df.loc["CREDITO UTILIZADO", cols[i]] = df.loc["DEVOLUCIONES DEL PRINCIPAL", cols[i]] - df.loc["SALDO VIVO DEL CRÉDITO", cols[i-1]]
+        df.loc["CRÈDIT UTILITZAT", cols[i]] = df.loc["DEVOLUCIONS DEL PRINCIPAL", cols[i]] - df.loc["SALDO VIU DEL CRÈDIT", cols[i-1]]
 
     df = df.fillna(0)
 
-    df.loc["CASH FLOW DESPUÉS DE FINANCIACIÓN"] = (
-        df.loc["CASH FLOW ANTES FINANCIACIÓN"] + df.loc["CREDITO UTILIZADO"]
-        - df.loc["GASTOS DE CONSTITUCIÓN"] - df.loc["INTERESES SOBRE EL SALDO VIVO"] - df.loc["DEVOLUCIONES DEL PRINCIPAL"]
+    df.loc["CASH FLOW DESPRÉS DE FINANÇAMENT"] = (
+        df.loc["CASH FLOW ABANS DE FINANÇAMENT"] + df.loc["CRÈDIT UTILITZAT"]
+        - df.loc["DESPESES DE CONSTITUCIÓ"] - df.loc["INTERESSOS SOBRE EL SALDO VIU"] - df.loc["DEVOLUCIONS DEL PRINCIPAL"]
     )
-    df.loc["CASH FLOW DESPUÉS DE FINANCIACIÓN ACUM"] = df.loc["CASH FLOW DESPUÉS DE FINANCIACIÓN"].cumsum()
+    df.loc["CASH FLOW DESPRÉS DE FINANÇAMENT ACUM"] = df.loc["CASH FLOW DESPRÉS DE FINANÇAMENT"].cumsum()
 
-    total_intereses = df.loc["INTERESES SOBRE EL SALDO VIVO"].sum()
+    total_intereses = df.loc["INTERESSOS SOBRE EL SALDO VIU"].sum()
     return df, total_intereses
 
 def _viab_fmt_num(value, decimals=0):
@@ -3219,7 +3366,7 @@ if selected == "Espanya":
             # st.subheader("**DADES ANUALS**")
             st.markdown(table_year(table_espanya_y, 2008, True, False).to_html(), unsafe_allow_html=True)
             st.markdown(filedownload(table_year(table_espanya_y, 2008, True, False), f"{selected_index}_Espanya_anual.xlsx"), unsafe_allow_html=True)
-            st_plotly_chart(line_plotly(table_espanya_m[table_espanya_m.index>="2015-01-01"], ["Inflació", "Inflació subjacent", "Índex de Garantia de Competitivitat (IGC)"], "Evolució mensual de la inflació (variació anual del IPC) i l'IGC (Índex de Garantia de Competitivitat)", "%",  "Any"), use_container_width=True, responsive=True)
+            st_plotly_chart(line_plotly(table_espanya_m[table_espanya_m.index>="2015-01-01"], ["Inflació", "Inflació subjacent", "Índex de Garantia de Competitivitat (IGC)"], "Evolució mensual de la inflació (variació anual de l'IPC) i l'IGC (Índex de Garantia de Competitivitat)", "%",  "Any"), use_container_width=True, responsive=True)
         if selected_index=="Consum de ciment":
             st.subheader("CONSUM DE CIMENT")
             st.markdown(f'<div class="custom-box">ANY {selected_year_n}</div>', unsafe_allow_html=True)
@@ -4382,6 +4529,113 @@ if selected=="Comarques":
     with right:
         available_years, index_year = year_selector_options(f"iniviv_{selected_com}", df_quarterly=DT_terr, df_annual=DT_terr_y)
         selected_year_n = st.selectbox("**Selecciona un any:**", available_years, available_years.index(index_year), key=504)
+        st.markdown('<div class="comparativa-toggle-anchor"></div>', unsafe_allow_html=True)
+        comarca_comparativa_on = st.toggle("📊 Comparativa entre comarques", key="comarca_comparativa_toggle")
+
+    if comarca_comparativa_on:
+        comp_com_col1, comp_com_col2 = st.columns((2, 1))
+        with comp_com_col1:
+            comp_com_filter_prov = st.selectbox(
+                "Filtra per província (opcional, per acotar la llista de comarques):",
+                ["(Totes)"] + sorted(maestro_mun["Província"].unique().tolist()), key="comarca_comparativa_filter_prov",
+            )
+        if comp_com_filter_prov != "(Totes)":
+            comarques_opcions = sorted(maestro_mun[maestro_mun["Província"] == comp_com_filter_prov]["Comarca"].unique().tolist())
+        else:
+            comarques_opcions = sorted(maestro_mun["Comarca"].unique().tolist())
+        if "comarca_comparativa_multiselect" not in st.session_state:
+            st.session_state["comarca_comparativa_multiselect"] = [selected_com] if selected_com in comarques_opcions else []
+        else:
+            st.session_state["comarca_comparativa_multiselect"] = [v for v in st.session_state["comarca_comparativa_multiselect"] if v in comarques_opcions]
+        with comp_com_col2:
+            st.markdown('<div style="height:28px"></div>', unsafe_allow_html=True)
+            if st.button("Afegir totes les comarques de la província", key="comarca_comparativa_add_all", disabled=(comp_com_filter_prov == "(Totes)")):
+                st.session_state["comarca_comparativa_multiselect"] = comarques_opcions[:15]
+                if len(comarques_opcions) > 15:
+                    st.warning(f"La província té {len(comarques_opcions)} comarques: només se n'han afegit les 15 primeres.")
+        comp_com_locations = st.multiselect(
+            "**Selecciona comarques a comparar:**", comarques_opcions,
+            max_selections=15, key="comarca_comparativa_multiselect",
+        )
+        if len(comp_com_locations) < 2:
+            st.info("Selecciona com a mínim 2 comarques per veure la comparativa.")
+        else:
+            st.markdown(
+                '<div class="viab-toc">'
+                '<a href="#comp-com-prod-iniacab">Producció: iniciats i acabats</a>'
+                '<a href="#comp-com-prod-hpo">Producció: qualificacions HPO</a>'
+                '<a href="#comp-com-compravendes">Compravendes</a>'
+                '<a href="#comp-com-preus">Preus</a>'
+                '<a href="#comp-com-superficie">Superfície</a>'
+                '</div>', unsafe_allow_html=True,
+            )
+            _comp_com_year_actual = LAST_CLOSED_YEAR
+            _comp_com_year_previous = LAST_CLOSED_YEAR - 1
+
+            def _comp_com_render_metric(frames_trim, frames_y, metric, unit_label, filename_prefix, trimestral=True):
+                t_any = comparativa_metric_table(frames_y, metric)
+                st.markdown(f"**{metric}**")
+                if trimestral:
+                    t_trim = comparativa_metric_table(frames_trim, metric)
+                    st.markdown(comparativa_style_table(comparativa_display_trim(t_trim).T).to_html(), unsafe_allow_html=True)
+                    st.markdown(filedownload(t_trim.T, f"Comparativa_{filename_prefix}_comarques.xlsx"), unsafe_allow_html=True)
+                st.markdown(comparativa_style_table(t_any.T).to_html(), unsafe_allow_html=True)
+                st.markdown(filedownload(t_any.T, f"Comparativa_{filename_prefix}_comarques_anual.xlsx"), unsafe_allow_html=True)
+                if trimestral:
+                    left_col, right_col = st.columns((1, 1))
+                    with left_col:
+                        st_plotly_chart(line_plotly(t_trim, t_trim.columns.tolist(), f"Evolució trimestral — {metric}", unit_label), use_container_width=True, responsive=True)
+                    with right_col:
+                        st_plotly_chart(bar_plotly_comparativa_anys(t_any, f"Comparativa anual — {metric}", unit_label, _comp_com_year_actual, _comp_com_year_previous), use_container_width=True, responsive=True)
+                else:
+                    st_plotly_chart(bar_plotly_comparativa_anys(t_any, f"Comparativa anual — {metric}", unit_label, _comp_com_year_actual, _comp_com_year_previous), use_container_width=True, responsive=True)
+
+            st.markdown('<div id="comp-com-prod-iniacab" class="viab-anchor"></div>', unsafe_allow_html=True)
+            st.subheader("COMPARATIVA — PRODUCCIÓ: INICIATS I ACABATS")
+            _frames_com_prod = comparativa_build_frames(["iniviv_", "finviv_"], comp_com_locations, ["Habitatges iniciats", "Habitatges acabats"], 2008)
+            _frames_com_prod_y = comparativa_build_frames(["iniviv_", "finviv_"], comp_com_locations, ["Habitatges iniciats", "Habitatges acabats"], 2008, annual=True)
+            for _metric in ["Habitatges iniciats", "Habitatges acabats"]:
+                _comp_com_render_metric(_frames_com_prod, _frames_com_prod_y, _metric, "Nombre d'habitatges", _metric)
+
+            st.markdown('<div id="comp-com-prod-hpo" class="viab-anchor"></div>', unsafe_allow_html=True)
+            st.subheader("COMPARATIVA — PRODUCCIÓ: QUALIFICACIONS HPO")
+            st.caption("Les qualificacions d'HPO només es publiquen amb periodicitat anual.")
+            _frames_com_hpo_y = comparativa_build_frames(["calprovgene_", "caldefgene_"], comp_com_locations, ["Qualificacions provisionals d'HPO", "Qualificacions definitives d'HPO"], 2008, annual=True)
+            for _metric in ["Qualificacions provisionals d'HPO", "Qualificacions definitives d'HPO"]:
+                _comp_com_render_metric(None, _frames_com_hpo_y, _metric, "Nombre de qualificacions", _metric, trimestral=False)
+
+            st.markdown('<div id="comp-com-compravendes" class="viab-anchor"></div>', unsafe_allow_html=True)
+            st.subheader("COMPARATIVA — COMPRAVENDES")
+            _comp_com_metrics_venda = ["Compravendes d'habitatge total", "Compravendes d'habitatge de segona mà", "Compravendes d'habitatge nou"]
+            _frames_com_venda = comparativa_build_frames(["trvivt_", "trvivs_", "trvivn_"], comp_com_locations, _comp_com_metrics_venda, 2014)
+            _frames_com_venda_y = comparativa_build_frames(["trvivt_", "trvivs_", "trvivn_"], comp_com_locations, _comp_com_metrics_venda, 2014, annual=True)
+            for _metric in _comp_com_metrics_venda:
+                _comp_com_render_metric(_frames_com_venda, _frames_com_venda_y, _metric, "Nombre de compravendes", _metric)
+            _t_any_total = comparativa_metric_table(_frames_com_venda_y, "Compravendes d'habitatge total")
+            _t_any_segona = comparativa_metric_table(_frames_com_venda_y, "Compravendes d'habitatge de segona mà")
+            _t_any_nova = comparativa_metric_table(_frames_com_venda_y, "Compravendes d'habitatge nou")
+            _any_ref = str(selected_year_n) if str(selected_year_n) in _t_any_total.index else _t_any_total.index[-1]
+            _pct_segona = (_t_any_segona.loc[_any_ref] / _t_any_total.loc[_any_ref] * 100).round(1)
+            _pct_nova = (_t_any_nova.loc[_any_ref] / _t_any_total.loc[_any_ref] * 100).round(1)
+            st.markdown("**Proporció segona mà vs obra nova**")
+            st_plotly_chart(bar_plotly_comparativa_100(_pct_segona, _pct_nova, "Segona mà", "Obra nova", "Proporció de compravendes per comarca", _any_ref), use_container_width=True, responsive=True)
+
+            st.markdown('<div id="comp-com-preus" class="viab-anchor"></div>', unsafe_allow_html=True)
+            st.subheader("COMPARATIVA — PREUS PER M² CONSTRUÏT")
+            _comp_com_metrics_preus = ["Preu d'habitatge total", "Preu d'habitatge de segona mà", "Preu d'habitatge nou"]
+            _frames_com_preus = comparativa_build_frames(["prvivt_", "prvivs_", "prvivn_"], comp_com_locations, _comp_com_metrics_preus, 2014)
+            _frames_com_preus_y = comparativa_build_frames(["prvivt_", "prvivs_", "prvivn_"], comp_com_locations, _comp_com_metrics_preus, 2014, annual=True)
+            for _metric in _comp_com_metrics_preus:
+                _comp_com_render_metric(_frames_com_preus, _frames_com_preus_y, _metric, "€/m²", _metric)
+
+            st.markdown('<div id="comp-com-superficie" class="viab-anchor"></div>', unsafe_allow_html=True)
+            st.subheader("COMPARATIVA — SUPERFÍCIE MITJANA")
+            _comp_com_metrics_sup = ["Superfície mitjana total", "Superfície mitjana d'habitatge de segona mà", "Superfície mitjana d'habitatge nou"]
+            _frames_com_sup = comparativa_build_frames(["supert_", "supers_", "supern_"], comp_com_locations, _comp_com_metrics_sup, 2014)
+            _frames_com_sup_y = comparativa_build_frames(["supert_", "supers_", "supern_"], comp_com_locations, _comp_com_metrics_sup, 2014, annual=True)
+            for _metric in _comp_com_metrics_sup:
+                _comp_com_render_metric(_frames_com_sup, _frames_com_sup_y, _metric, "m²", _metric)
+
     if selected_type=="Venda":
         if selected_index=="Producció":
             min_year=2008
@@ -4443,7 +4697,7 @@ if selected=="Comarques":
                 st_plotly_chart(area_plotly(table_com[selected_columns_ini], selected_columns_ini, "Habitatges iniciats per tipologia", "Habitatges iniciats", "2011T1"), use_container_width=True, responsive=True)
                 st_plotly_chart(area_plotly(table_com_pluri, table_com_pluri.columns.tolist(), "Habitatges iniciats plurifamiliars per superfície construïda", "Habitatges iniciats", "2014T1"), use_container_width=True, responsive=True)
             with right_col:
-                st_plotly_chart(bar_plotly(table_com_y[selected_columns_aux], selected_columns_aux, "Evolució anual de la produció d'habitatges", "Indicador d'oferta en nivells", 2005), use_container_width=True, responsive=True)
+                st_plotly_chart(bar_plotly(table_com_y[selected_columns_aux], selected_columns_aux, "Evolució anual de la producció d'habitatges", "Indicador d'oferta en nivells", 2005), use_container_width=True, responsive=True)
                 st_plotly_chart(area_plotly(table_com[selected_columns_fin], selected_columns_fin, "Habitatges acabats per tipologia", "Habitatges acabats", "2011T1"), use_container_width=True, responsive=True)
                 st_plotly_chart(area_plotly(table_com_uni, table_com_uni.columns.tolist(), "Habitatges iniciats unifamiliars per superfície construïda", "Habitatges iniciats", "2014T1"), use_container_width=True, responsive=True)
 
@@ -4607,7 +4861,120 @@ if selected=="Municipis":
         if (selected_type=="Venda") or (selected_type=="Lloguer"):
             available_years, index_year = year_selector_options(f"iniviv_{selected_mun}", df_quarterly=DT_mun, df_annual=DT_mun_y)
             selected_year_n = st.selectbox("**Selecciona un any:**", available_years, available_years.index(index_year), key=604)
+        if selected_type=="Venda":
+            st.markdown('<div class="comparativa-toggle-anchor"></div>', unsafe_allow_html=True)
+            mun_comparativa_on = st.toggle("📊 Comparativa entre municipis", key="mun_comparativa_toggle")
     if selected_type=="Venda":
+        if mun_comparativa_on:
+            _mun_add = maestro_mun[maestro_mun["ADD"] == "SI"]
+            comp_mun_col1, comp_mun_col2, comp_mun_col3 = st.columns((1, 1, 1))
+            with comp_mun_col1:
+                comp_mun_filter_prov = st.selectbox(
+                    "Filtra per província (opcional, per acotar la llista de municipis):",
+                    ["(Totes)"] + sorted(_mun_add["Província"].unique().tolist()), key="mun_comparativa_filter_prov",
+                )
+            _mun_pool = _mun_add if comp_mun_filter_prov == "(Totes)" else _mun_add[_mun_add["Província"] == comp_mun_filter_prov]
+            with comp_mun_col2:
+                comp_mun_filter_com = st.selectbox(
+                    "Filtra per comarca (opcional, per acotar la llista de municipis):",
+                    ["(Totes)"] + sorted(_mun_pool["Comarca"].unique().tolist()), key="mun_comparativa_filter_com",
+                )
+            if comp_mun_filter_com != "(Totes)":
+                _mun_pool = _mun_pool[_mun_pool["Comarca"] == comp_mun_filter_com]
+            municipis_opcions = sorted(_mun_pool["Municipi"].unique().tolist())
+            if "mun_comparativa_multiselect" not in st.session_state:
+                st.session_state["mun_comparativa_multiselect"] = [selected_mun] if selected_mun in municipis_opcions else []
+            else:
+                st.session_state["mun_comparativa_multiselect"] = [v for v in st.session_state["mun_comparativa_multiselect"] if v in municipis_opcions]
+            with comp_mun_col3:
+                st.markdown('<div style="height:28px"></div>', unsafe_allow_html=True)
+                if st.button("Afegir tots els municipis de la comarca", key="mun_comparativa_add_all", disabled=(comp_mun_filter_com == "(Totes)")):
+                    st.session_state["mun_comparativa_multiselect"] = municipis_opcions[:15]
+                    if len(municipis_opcions) > 15:
+                        st.warning(f"La comarca té {len(municipis_opcions)} municipis: només se n'han afegit els 15 primers.")
+            comp_mun_locations = st.multiselect(
+                "**Selecciona municipis a comparar:**", municipis_opcions,
+                max_selections=15, key="mun_comparativa_multiselect",
+            )
+            if len(comp_mun_locations) < 2:
+                st.info("Selecciona com a mínim 2 municipis per veure la comparativa.")
+            else:
+                st.markdown(
+                    '<div class="viab-toc">'
+                    '<a href="#comp-mun-prod-iniacab">Producció: iniciats i acabats</a>'
+                    '<a href="#comp-mun-prod-hpo">Producció: qualificacions HPO</a>'
+                    '<a href="#comp-mun-compravendes">Compravendes</a>'
+                    '<a href="#comp-mun-preus">Preus</a>'
+                    '<a href="#comp-mun-superficie">Superfície</a>'
+                    '</div>', unsafe_allow_html=True,
+                )
+                _comp_mun_year_actual = LAST_CLOSED_YEAR
+                _comp_mun_year_previous = LAST_CLOSED_YEAR - 1
+
+                def _comp_mun_render_metric(frames_trim, frames_y, metric, unit_label, filename_prefix, trimestral=True):
+                    t_any = comparativa_metric_table(frames_y, metric)
+                    st.markdown(f"**{metric}**")
+                    if trimestral:
+                        t_trim = comparativa_metric_table(frames_trim, metric)
+                        st.markdown(comparativa_style_table(comparativa_display_trim(t_trim).T).to_html(), unsafe_allow_html=True)
+                        st.markdown(filedownload(t_trim.T, f"Comparativa_{filename_prefix}_municipis.xlsx"), unsafe_allow_html=True)
+                    st.markdown(comparativa_style_table(t_any.T).to_html(), unsafe_allow_html=True)
+                    st.markdown(filedownload(t_any.T, f"Comparativa_{filename_prefix}_municipis_anual.xlsx"), unsafe_allow_html=True)
+                    if trimestral:
+                        left_col, right_col = st.columns((1, 1))
+                        with left_col:
+                            st_plotly_chart(line_plotly(t_trim, t_trim.columns.tolist(), f"Evolució trimestral — {metric}", unit_label), use_container_width=True, responsive=True)
+                        with right_col:
+                            st_plotly_chart(bar_plotly_comparativa_anys(t_any, f"Comparativa anual — {metric}", unit_label, _comp_mun_year_actual, _comp_mun_year_previous), use_container_width=True, responsive=True)
+                    else:
+                        st_plotly_chart(bar_plotly_comparativa_anys(t_any, f"Comparativa anual — {metric}", unit_label, _comp_mun_year_actual, _comp_mun_year_previous), use_container_width=True, responsive=True)
+
+                st.markdown('<div id="comp-mun-prod-iniacab" class="viab-anchor"></div>', unsafe_allow_html=True)
+                st.subheader("COMPARATIVA — PRODUCCIÓ: INICIATS I ACABATS")
+                _frames_mun_prod = comparativa_build_frames(["iniviv_", "finviv_"], comp_mun_locations, ["Habitatges iniciats", "Habitatges acabats"], 2008, df_quarterly=DT_mun, df_annual=DT_mun_y)
+                _frames_mun_prod_y = comparativa_build_frames(["iniviv_", "finviv_"], comp_mun_locations, ["Habitatges iniciats", "Habitatges acabats"], 2008, annual=True, df_quarterly=DT_mun, df_annual=DT_mun_y)
+                for _metric in ["Habitatges iniciats", "Habitatges acabats"]:
+                    _comp_mun_render_metric(_frames_mun_prod, _frames_mun_prod_y, _metric, "Nombre d'habitatges", _metric)
+
+                st.markdown('<div id="comp-mun-prod-hpo" class="viab-anchor"></div>', unsafe_allow_html=True)
+                st.subheader("COMPARATIVA — PRODUCCIÓ: QUALIFICACIONS HPO")
+                st.caption("Les qualificacions d'HPO només es publiquen amb periodicitat anual.")
+                _frames_mun_hpo_y = comparativa_build_frames(["calprovgene_", "caldefgene_"], comp_mun_locations, ["Qualificacions provisionals d'HPO", "Qualificacions definitives d'HPO"], 2008, annual=True, df_quarterly=DT_mun, df_annual=DT_mun_y)
+                for _metric in ["Qualificacions provisionals d'HPO", "Qualificacions definitives d'HPO"]:
+                    _comp_mun_render_metric(None, _frames_mun_hpo_y, _metric, "Nombre de qualificacions", _metric, trimestral=False)
+
+                st.markdown('<div id="comp-mun-compravendes" class="viab-anchor"></div>', unsafe_allow_html=True)
+                st.subheader("COMPARATIVA — COMPRAVENDES")
+                _comp_mun_metrics_venda = ["Compravendes d'habitatge total", "Compravendes d'habitatge de segona mà", "Compravendes d'habitatge nou"]
+                _frames_mun_venda = comparativa_build_frames(["trvivt_", "trvivs_", "trvivn_"], comp_mun_locations, _comp_mun_metrics_venda, 2014, df_quarterly=DT_mun, df_annual=DT_mun_y)
+                _frames_mun_venda_y = comparativa_build_frames(["trvivt_", "trvivs_", "trvivn_"], comp_mun_locations, _comp_mun_metrics_venda, 2014, annual=True, df_quarterly=DT_mun, df_annual=DT_mun_y)
+                for _metric in _comp_mun_metrics_venda:
+                    _comp_mun_render_metric(_frames_mun_venda, _frames_mun_venda_y, _metric, "Nombre de compravendes", _metric)
+                _t_any_total = comparativa_metric_table(_frames_mun_venda_y, "Compravendes d'habitatge total")
+                _t_any_segona = comparativa_metric_table(_frames_mun_venda_y, "Compravendes d'habitatge de segona mà")
+                _t_any_nova = comparativa_metric_table(_frames_mun_venda_y, "Compravendes d'habitatge nou")
+                _any_ref = str(selected_year_n) if str(selected_year_n) in _t_any_total.index else _t_any_total.index[-1]
+                _pct_segona = (_t_any_segona.loc[_any_ref] / _t_any_total.loc[_any_ref] * 100).round(1)
+                _pct_nova = (_t_any_nova.loc[_any_ref] / _t_any_total.loc[_any_ref] * 100).round(1)
+                st.markdown("**Proporció segona mà vs obra nova**")
+                st_plotly_chart(bar_plotly_comparativa_100(_pct_segona, _pct_nova, "Segona mà", "Obra nova", "Proporció de compravendes per municipi", _any_ref), use_container_width=True, responsive=True)
+
+                st.markdown('<div id="comp-mun-preus" class="viab-anchor"></div>', unsafe_allow_html=True)
+                st.subheader("COMPARATIVA — PREUS PER M² CONSTRUÏT")
+                _comp_mun_metrics_preus = ["Preu d'habitatge total", "Preu d'habitatge de segona mà", "Preu d'habitatge nou"]
+                _frames_mun_preus = comparativa_build_frames(["prvivt_", "prvivs_", "prvivn_"], comp_mun_locations, _comp_mun_metrics_preus, 2014, df_quarterly=DT_mun, df_annual=DT_mun_y)
+                _frames_mun_preus_y = comparativa_build_frames(["prvivt_", "prvivs_", "prvivn_"], comp_mun_locations, _comp_mun_metrics_preus, 2014, annual=True, df_quarterly=DT_mun, df_annual=DT_mun_y)
+                for _metric in _comp_mun_metrics_preus:
+                    _comp_mun_render_metric(_frames_mun_preus, _frames_mun_preus_y, _metric, "€/m²", _metric)
+
+                st.markdown('<div id="comp-mun-superficie" class="viab-anchor"></div>', unsafe_allow_html=True)
+                st.subheader("COMPARATIVA — SUPERFÍCIE MITJANA")
+                _comp_mun_metrics_sup = ["Superfície mitjana total", "Superfície mitjana d'habitatge de segona mà", "Superfície mitjana d'habitatge nou"]
+                _frames_mun_sup = comparativa_build_frames(["supert_", "supers_", "supern_"], comp_mun_locations, _comp_mun_metrics_sup, 2014, df_quarterly=DT_mun, df_annual=DT_mun_y)
+                _frames_mun_sup_y = comparativa_build_frames(["supert_", "supers_", "supern_"], comp_mun_locations, _comp_mun_metrics_sup, 2014, annual=True, df_quarterly=DT_mun, df_annual=DT_mun_y)
+                for _metric in _comp_mun_metrics_sup:
+                    _comp_mun_render_metric(_frames_mun_sup, _frames_mun_sup_y, _metric, "m²", _metric)
+
         if selected_index=="Producció":
             min_year=2008
             st.subheader(f"PRODUCCIÓ D'HABITATGES A {selected_mun.upper()}")
@@ -4906,7 +5273,7 @@ if selected=="Municipis":
             )
 
         with right:
-            st_metric("Grandària mitjà de la llar", value=f"""{round(censo_2021[censo_2021["Municipi"]==selected_mun]["Tamaño medio del hogar"].values[0],2)}""")
+            st_metric("Grandària mitjana de la llar", value=f"""{round(censo_2021[censo_2021["Municipi"]==selected_mun]["Tamaño medio del hogar"].values[0],2)}""")
             st_metric("Proporció de població estrangera", value=f"""{round(censo_2021[censo_2021["Municipi"]==selected_mun]["Perc_extranjera"].values[0],1)}%""")
             st_metric("Proporció de població amb educació superior", value=f"""{round(censo_2021[censo_2021["Municipi"]==selected_mun]["Porc_Edu_superior"].values[0],1)}%""")
             st_metric(label=f"Població 35–44 anys (% sobre total) ({age3544_year})", value=fmt_pct(pct3544))
@@ -4943,9 +5310,9 @@ if selected=="Municipis":
             _ibi_col = "IBI_quota_" + selected_mun
             _ibi_data = idescat_muns[["Any", _ibi_col]].dropna() if _ibi_col in idescat_muns.columns else idescat_muns.iloc[0:0]
             if not _ibi_data.empty:
-                st_metric(f"Quota integra del Impost sobre Bèns Immobles (IBI) ({_ibi_data['Any'].values[0]})", value=f"""{int(_ibi_data[_ibi_col].values[0]):,.0f}""")
+                st_metric(f"Quota íntegra de l'Impost sobre Béns Immobles (IBI) ({_ibi_data['Any'].values[0]})", value=f"""{int(_ibi_data[_ibi_col].values[0]):,.0f}""")
             else:
-                st_metric("Quota integra del Impost sobre Bèns Immobles (IBI)", value="No disponible")
+                st_metric("Quota íntegra de l'Impost sobre Béns Immobles (IBI)", value="No disponible")
             st_metric(
                 label=f"Residus municipals per càpita (kg/hab/dia) ({int(sel[sel['nombre_largo']=='Residus municipals per càpita (kg/hab/dia)']['last_year'].values[0])})",
                 value=int(sel[sel['nombre_largo']=='Residus municipals per càpita (kg/hab/dia)']['last_value'].values[0])
@@ -5036,7 +5403,96 @@ if selected=="Districtes de Barcelona":
         if (selected_type=="Venda") or (selected_type=="Lloguer"):
             available_years, index_year = year_selector_options(f"iniviv_{selected_dis}", df_quarterly=DT_dis, df_annual=DT_dis_y)
             selected_year_n = st.selectbox("**Selecciona un any:**", available_years, available_years.index(index_year), key=704)
+        if selected_type=="Venda":
+            st.markdown('<div class="comparativa-toggle-anchor"></div>', unsafe_allow_html=True)
+            dis_comparativa_on = st.toggle("📊 Comparativa entre districtes", key="dis_comparativa_toggle")
     if selected_type=="Venda":
+        if dis_comparativa_on:
+            totes_districtes = sorted(maestro_dis["Districte"].unique().tolist())
+            if "dis_comparativa_multiselect" not in st.session_state:
+                st.session_state["dis_comparativa_multiselect"] = [selected_dis]
+            comp_dis_col1, comp_dis_col2 = st.columns((2, 1))
+            with comp_dis_col2:
+                st.markdown('<div style="height:28px"></div>', unsafe_allow_html=True)
+                if st.button("Afegir tots els districtes", key="dis_comparativa_add_all"):
+                    st.session_state["dis_comparativa_multiselect"] = totes_districtes
+            with comp_dis_col1:
+                comp_dis_locations = st.multiselect(
+                    "**Selecciona districtes a comparar:**", totes_districtes,
+                    max_selections=15, key="dis_comparativa_multiselect",
+                )
+            if len(comp_dis_locations) < 2:
+                st.info("Selecciona com a mínim 2 districtes per veure la comparativa.")
+            else:
+                st.markdown(
+                    '<div class="viab-toc">'
+                    '<a href="#comp-dis-produccio">Producció: iniciats i acabats</a>'
+                    '<a href="#comp-dis-compravendes">Compravendes</a>'
+                    '<a href="#comp-dis-preus">Preus</a>'
+                    '<a href="#comp-dis-superficie">Superfície</a>'
+                    '</div>', unsafe_allow_html=True,
+                )
+                _comp_dis_year_actual = LAST_CLOSED_YEAR
+                _comp_dis_year_previous = LAST_CLOSED_YEAR - 1
+
+                def _comp_dis_render_metric(frames_trim, frames_y, metric, unit_label, filename_prefix, trimestral=True):
+                    t_any = comparativa_metric_table(frames_y, metric)
+                    st.markdown(f"**{metric}**")
+                    if trimestral:
+                        t_trim = comparativa_metric_table(frames_trim, metric)
+                        st.markdown(comparativa_style_table(comparativa_display_trim(t_trim).T).to_html(), unsafe_allow_html=True)
+                        st.markdown(filedownload(t_trim.T, f"Comparativa_{filename_prefix}_districtes.xlsx"), unsafe_allow_html=True)
+                    st.markdown(comparativa_style_table(t_any.T).to_html(), unsafe_allow_html=True)
+                    st.markdown(filedownload(t_any.T, f"Comparativa_{filename_prefix}_districtes_anual.xlsx"), unsafe_allow_html=True)
+                    if trimestral:
+                        left_col, right_col = st.columns((1, 1))
+                        with left_col:
+                            st_plotly_chart(line_plotly(t_trim, t_trim.columns.tolist(), f"Evolució trimestral — {metric}", unit_label), use_container_width=True, responsive=True)
+                        with right_col:
+                            st_plotly_chart(bar_plotly_comparativa_anys(t_any, f"Comparativa anual — {metric}", unit_label, _comp_dis_year_actual, _comp_dis_year_previous), use_container_width=True, responsive=True)
+                    else:
+                        st_plotly_chart(bar_plotly_comparativa_anys(t_any, f"Comparativa anual — {metric}", unit_label, _comp_dis_year_actual, _comp_dis_year_previous), use_container_width=True, responsive=True)
+
+                st.markdown('<div id="comp-dis-produccio" class="viab-anchor"></div>', unsafe_allow_html=True)
+                st.subheader("COMPARATIVA — PRODUCCIÓ: INICIATS I ACABATS")
+                st.caption("Els districtes de Barcelona no tenen desglossament de qualificacions d'HPO.")
+                _frames_dis_prod = comparativa_build_frames(["iniviv_", "finviv_"], comp_dis_locations, ["Habitatges iniciats", "Habitatges acabats"], 2011, df_quarterly=DT_dis, df_annual=DT_dis_y)
+                _frames_dis_prod_y = comparativa_build_frames(["iniviv_", "finviv_"], comp_dis_locations, ["Habitatges iniciats", "Habitatges acabats"], 2011, annual=True, df_quarterly=DT_dis, df_annual=DT_dis_y)
+                for _metric in ["Habitatges iniciats", "Habitatges acabats"]:
+                    _comp_dis_render_metric(_frames_dis_prod, _frames_dis_prod_y, _metric, "Nombre d'habitatges", _metric)
+
+                st.markdown('<div id="comp-dis-compravendes" class="viab-anchor"></div>', unsafe_allow_html=True)
+                st.subheader("COMPARATIVA — COMPRAVENDES")
+                _comp_dis_metrics_venda = ["Compravendes d'habitatge total", "Compravendes d'habitatge de segona mà", "Compravendes d'habitatge nou"]
+                _frames_dis_venda = comparativa_build_frames(["trvivt_", "trvivs_", "trvivn_"], comp_dis_locations, _comp_dis_metrics_venda, 2014, df_quarterly=DT_dis, df_annual=DT_dis_y)
+                _frames_dis_venda_y = comparativa_build_frames(["trvivt_", "trvivs_", "trvivn_"], comp_dis_locations, _comp_dis_metrics_venda, 2014, annual=True, df_quarterly=DT_dis, df_annual=DT_dis_y)
+                for _metric in _comp_dis_metrics_venda:
+                    _comp_dis_render_metric(_frames_dis_venda, _frames_dis_venda_y, _metric, "Nombre de compravendes", _metric)
+                _t_any_total = comparativa_metric_table(_frames_dis_venda_y, "Compravendes d'habitatge total")
+                _t_any_segona = comparativa_metric_table(_frames_dis_venda_y, "Compravendes d'habitatge de segona mà")
+                _t_any_nova = comparativa_metric_table(_frames_dis_venda_y, "Compravendes d'habitatge nou")
+                _any_ref = str(selected_year_n) if str(selected_year_n) in _t_any_total.index else _t_any_total.index[-1]
+                _pct_segona = (_t_any_segona.loc[_any_ref] / _t_any_total.loc[_any_ref] * 100).round(1)
+                _pct_nova = (_t_any_nova.loc[_any_ref] / _t_any_total.loc[_any_ref] * 100).round(1)
+                st.markdown("**Proporció segona mà vs obra nova**")
+                st_plotly_chart(bar_plotly_comparativa_100(_pct_segona, _pct_nova, "Segona mà", "Obra nova", "Proporció de compravendes per districte", _any_ref), use_container_width=True, responsive=True)
+
+                st.markdown('<div id="comp-dis-preus" class="viab-anchor"></div>', unsafe_allow_html=True)
+                st.subheader("COMPARATIVA — PREUS PER M² CONSTRUÏT")
+                _comp_dis_metrics_preus = ["Preu d'habitatge total", "Preu d'habitatge de segona mà", "Preu d'habitatge nou"]
+                _frames_dis_preus = comparativa_build_frames(["prvivt_", "prvivs_", "prvivn_"], comp_dis_locations, _comp_dis_metrics_preus, 2014, df_quarterly=DT_dis, df_annual=DT_dis_y)
+                _frames_dis_preus_y = comparativa_build_frames(["prvivt_", "prvivs_", "prvivn_"], comp_dis_locations, _comp_dis_metrics_preus, 2014, annual=True, df_quarterly=DT_dis, df_annual=DT_dis_y)
+                for _metric in _comp_dis_metrics_preus:
+                    _comp_dis_render_metric(_frames_dis_preus, _frames_dis_preus_y, _metric, "€/m²", _metric)
+
+                st.markdown('<div id="comp-dis-superficie" class="viab-anchor"></div>', unsafe_allow_html=True)
+                st.subheader("COMPARATIVA — SUPERFÍCIE MITJANA")
+                _comp_dis_metrics_sup = ["Superfície mitjana total", "Superfície mitjana d'habitatge de segona mà", "Superfície mitjana d'habitatge nou"]
+                _frames_dis_sup = comparativa_build_frames(["supert_", "supers_", "supern_"], comp_dis_locations, _comp_dis_metrics_sup, 2014, df_quarterly=DT_dis, df_annual=DT_dis_y)
+                _frames_dis_sup_y = comparativa_build_frames(["supert_", "supers_", "supern_"], comp_dis_locations, _comp_dis_metrics_sup, 2014, annual=True, df_quarterly=DT_dis, df_annual=DT_dis_y)
+                for _metric in _comp_dis_metrics_sup:
+                    _comp_dis_render_metric(_frames_dis_sup, _frames_dis_sup_y, _metric, "m²", _metric)
+
         if selected_index=="Producció":
             min_year=2011
             st.subheader(f"PRODUCCIÓ D'HABITATGES A {selected_dis.upper()}")
@@ -5243,7 +5699,7 @@ if selected=="Districtes de Barcelona":
             st_plotly_chart(bar_plotly(table_dis_y, ["Nombre de contractes de lloguer"],  "Evolució anual del nombre de contractes de lloguer", "Nombre de contractes", 2005), use_container_width=True, responsive=True)
 
     if selected_type=="Demografia i parc d'habitatge":
-        st.markdown(f'<div class="custom-box">DEMOGRAFIA Y RENDA (2021)</div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="custom-box">DEMOGRAFIA I RENDA (2021)</div>', unsafe_allow_html=True)
         left, right = st.columns((1,1))
         with left:
             subset_tamaño_dis = censo_2021_dis[censo_2021_dis["Distrito"] == selected_dis][["1", "2", "3", "4", "5 o más"]]
@@ -5254,7 +5710,7 @@ if selected=="Districtes de Barcelona":
             st_metric("Proporció de població nacional", value=f"""{round(100 - censo_2021_dis[censo_2021_dis["Distrito"]==selected_dis]["Perc_extranjera"].values[0]*100,0)}%""")
             st_metric("Renda neta per llar", value=f"""{(rentaneta_dis["rentahogar_" + selected_dis].values[-1]):,.0f}""")
         with right:
-            st_metric("Grandària mitjà de la llar", value=f"""{censo_2021_dis[censo_2021_dis["Distrito"]==selected_dis]["Tamaño medio del hogar"].values[0]}""")
+            st_metric("Grandària mitjana de la llar", value=f"""{censo_2021_dis[censo_2021_dis["Distrito"]==selected_dis]["Tamaño medio del hogar"].values[0]}""")
             st_metric("Proporció de població estrangera", value=f"""{round(censo_2021_dis[censo_2021_dis["Distrito"]==selected_dis]["Perc_extranjera"].values[0],2)*100}%""")
             st_metric("Proporció de població amb educació superior", value=f"""{round(censo_2021_dis[censo_2021_dis["Distrito"]==selected_dis]["Perc_edusuperior"].values[0]*100,1)}%""")
 
@@ -5264,7 +5720,7 @@ if selected=="Districtes de Barcelona":
             st_metric("Proporció d'habitatges en propietat", value=f"""{round(censo_2021_dis[censo_2021_dis["Distrito"]==selected_dis]["Perc_propiedad"].values[0],1)}%""")
             st_metric("Proporció d'habitatges principals", value=f"""{round(100 - censo_2021_dis[censo_2021_dis["Distrito"]==selected_dis]["Perc_noprincipales"].values[0],1)}%""")
             st_metric("Edat mitjana dels habitatges", value=f"""{round(censo_2021_dis[censo_2021_dis["Distrito"]==selected_dis]["Edad media"].values[0],1)}""")
-            st_plotly_chart(bar_plotly_demografia(rentaneta_dis.rename(columns={"Año":"Any"}).set_index("Any"), ["rentahogar_" + selected_dis], "Evolución anual de la renta media neta anual", "€", 2015), use_container_width=True, responsive=True)
+            st_plotly_chart(bar_plotly_demografia(rentaneta_dis.rename(columns={"Año":"Any"}).set_index("Any"), ["rentahogar_" + selected_dis], "Evolució anual de la renda mitjana neta", "€", 2015), use_container_width=True, responsive=True)
         with right:
             st_metric("Proporció d'habitatges en lloguer", value=f"""{round(censo_2021_dis[censo_2021_dis["Distrito"]==selected_dis]["Perc_alquiler"].values[0], 1)}%""")
             st_metric("Proporció d'habitatges no principals", value=f"""{round(censo_2021_dis[censo_2021_dis["Distrito"]==selected_dis]["Perc_noprincipales"].values[0],1)}%""")
@@ -5302,13 +5758,13 @@ if selected=="Mapa interactiu":
         key=f"mapa_municipis_{var_prefix}_{any_mapa}",
     )
 
-if selected == "Informe de mercat i sectorial":
+if selected == "Informe de Mercat i Sectorial":
     st.subheader("INFORME DE MERCAT PER MUNICIPI")
     left, right = st.columns((1, 1))
     with left:
         selected_mun = st.selectbox("**Selecciona un municipi:**", maestro_mun[maestro_mun["ADD"]=="SI"]["Municipi"].unique(), index= maestro_mun[maestro_mun["ADD"]=="SI"]["Municipi"].tolist().index("Barcelona"), key=602)
     with right:
-        st.write("**Descarrega el informe complet del municipi seleccionat:**")
+        st.write("**Descarrega l'informe complet del municipi seleccionat:**")
         if st.button("📄 Descarregar informe PDF"):
             with st.spinner(f"Generant informe per a {selected_mun}..."):
                 min_year=2008
@@ -5520,7 +5976,7 @@ if selected == "Informe de mercat i sectorial":
                 unsafe_allow_html=True,
             )
 
-if selected == "Viabilitat financera":
+if selected == "Viabilitat Financera":
     st.subheader("VIABILITAT FINANCERA")
     st.markdown(
         '<div class="viab-toc">'
@@ -5573,147 +6029,289 @@ if selected == "Viabilitat financera":
             min_value=0.0, decimals=0, placeholder=None if _viab_preu_fiable else "Introdueix el preu manualment",
         )
         if _viab_preu_fiable:
-            st.caption(f"{_viab_atlas_unitats} habitatges nous en oferta (font: Estudi d'Oferta d'obra nova APCE, informe {_viab_atlas_any} H1).")
+            st.caption(f"{_viab_atlas_unitats} habitatges nous en oferta (font: Estudi d'Oferta d'obra nova APCE, informe 1S{_viab_atlas_any}).")
         else:
             st.caption(f"Avís: només {_viab_atlas_unitats} habitatges nous en oferta al municipi (mínim {VIAB_MIN_UNITATS_OFERTA} per a un preu orientatiu fiable). Introdueix el preu manualment.")
 
     viab_metode = st.radio("**Mètode de càlcul del sòl:**", ("Fixar rendibilitat abans d'impostos i interessos", "Fixar preu del sòl"), horizontal=True, key="viab_metode")
     if viab_metode == "Fixar rendibilitat abans d'impostos i interessos":
-        viab_rendibilitat = st.slider("**Rendibilitat objectiu (%)**", 0, 50, value=10, key="viab_rendibilitat")
         viab_preu_solar_manual = None
+        with st.columns(3)[0]:
+            viab_rendibilitat = st.slider("**Rendibilitat objectiu (%)**", 0, 50, value=10, key="viab_rendibilitat")
     else:
         viab_rendibilitat = None
-        viab_preu_solar_manual = _viab_number_input("**Cost del sòl (€)**", "viab_preu_solar_manual", default=1000000.0, min_value=0.0, decimals=0)
+        with st.columns(3)[0]:
+            viab_preu_solar_manual = _viab_number_input(
+                "**Cost del sòl (€)**", f"viab_preu_solar_manual_{viab_mun}", default=None,
+                min_value=0.0, decimals=0, placeholder="Introdueix el preu del sòl",
+            )
+    _viab_solar_missing = viab_metode == "Fixar preu del sòl" and not viab_preu_solar_manual
+    if _viab_solar_missing:
+        st.warning("Introdueix el cost del sòl (€) per calcular l'anàlisi de viabilitat.")
 
     quarters = [_viab_add_quarters(viab_data_inici, i) for i in range(VIAB_MAX_TRIM)]
     st.markdown(f'<div class="custom-box">Trimestre d\'inici: {quarters[0]}</div>', unsafe_allow_html=True)
 
     with st.expander("Corbes d'evolució trimestral (% per trimestre, editable)"):
+        st.caption("Cada fila reparteix el 100% d'un concepte (construcció, vendes, sòl...) entre els trimestres de la promoció. Els percentatges de cada fila haurien de sumar 100; si no hi sumen, es reescalen automàticament de manera proporcional.")
         _viab_curves_pct = (_viab_default_curves(quarters) * 100).round(1)
         _viab_curves_edited = st.data_editor(_viab_curves_pct, key="viab_curves_editor")
         curves = _viab_curves_edited / 100
         row_sums = curves.sum(axis=1).replace(0, 1)
         curves = curves.div(row_sums, axis=0)  # normalitza per si l'usuari desquadra una fila
 
-    _viab_mode = "rentabilitat" if viab_metode == "Fixar rendibilitat abans d'impostos i interessos" else "preu_solar"
-    estatic_pre = _viab_calcul_estatic(
-        _viab_mode, viab_superficie, viab_preciom2, viab_costem2, viab_tipo_interes,
-        rentabilidad_pct=viab_rendibilitat, preu_solar_manual=viab_preu_solar_manual, intereses_hipoteca=0.0,
-    )
-    dinamic_df, total_intereses = _viab_calcul_dinamic(estatic_pre, curves, quarters, viab_tipo_interes)
-    estatic = _viab_calcul_estatic(
-        _viab_mode, viab_superficie, viab_preciom2, viab_costem2, viab_tipo_interes,
-        rentabilidad_pct=viab_rendibilitat, preu_solar_manual=viab_preu_solar_manual, intereses_hipoteca=total_intereses,
-    )
+    with st.expander("Hipòtesis i percentatges (editable)"):
+        h1, h2, h3 = st.columns(3)
+        with h1:
+            viab_recursos_propis_pct = _viab_number_input(
+                "**Recursos propis (%)**", "viab_recursos_propis_pct", default=VIAB_RECURSOS_PROPIS_PCT * 100,
+                min_value=0.0, decimals=1, help="Sobre els ingressos per vendes. La resta (100% − aquest valor) es finança amb crèdit.",
+            )
+            viab_honoraris_pct = _viab_number_input("**Honoraris tècnics (%)**", "viab_honoraris_pct", default=VIAB_HONORARIS_PCT * 100, min_value=0.0, decimals=1, help="Sobre el cost d'edificació (BEC).")
+            viab_admin_promocio_pct = _viab_number_input("**Administració de la promoció (%)**", "viab_admin_promocio_pct", default=VIAB_ADMIN_PROMOCIO_PCT * 100, min_value=0.0, decimals=1, help="Sobre el cost d'edificació (BEC).")
+            viab_iva_solar_pct = _viab_number_input("**IVA solar (%)**", "viab_iva_solar_pct", default=VIAB_IVA_SOLAR_PCT * 100, min_value=0.0, decimals=1, help="Sobre el preu del sòl.")
+        with h2:
+            viab_otros_solar_pct = _viab_number_input("**Altres costos del sòl (%)**", "viab_otros_solar_pct", default=VIAB_OTROS_SOLAR_PCT * 100, min_value=0.0, decimals=1, help="Sobre el preu del sòl. Notaria, registre, impostos de la transmissió...")
+            viab_llicencies_pct = _viab_number_input("**Llicències (%)**", "viab_llicencies_pct", default=VIAB_LLICENCIES_PCT * 100, min_value=0.0, decimals=1, help="Sobre el cost d'edificació (BEC).")
+            viab_comercialitzacio_pct = _viab_number_input("**Comercialització (%)**", "viab_comercialitzacio_pct", default=VIAB_COMERCIALITZACIO_PCT * 100, min_value=0.0, decimals=1, help="Sobre els ingressos per vendes.")
+            viab_iva_edificacio_pct = _viab_number_input("**IVA edificació (%)**", "viab_iva_edificacio_pct", default=VIAB_IVA_EDIFICACIO_PCT * 100, min_value=0.0, decimals=1, help="Sobre el cost d'edificació (BEC).")
+        with h3:
+            viab_gastos_legals_pct = _viab_number_input("**Despeses legals (%)**", "viab_gastos_legals_pct", default=VIAB_GASTOS_LEGALS_PCT * 100, min_value=0.0, decimals=1, help="Sobre el cost d'edificació (BEC).")
+            viab_altres_edif_pct = _viab_number_input("**Altres costos edificació (%)**", "viab_altres_edif_pct", default=VIAB_ALTRES_EDIF_PCT * 100, min_value=0.0, decimals=1, help="Sobre el cost d'edificació (BEC).")
+            viab_gastos_constitucio_pct = _viab_number_input("**Despeses de constitució del crèdit (%)**", "viab_gastos_constitucio_pct", default=VIAB_GASTOS_CONSTITUCIO_PCT * 100, min_value=0.0, decimals=1, help="Sobre l'import del crèdit concedit.")
+        viab_credit_pct = 100.0 - viab_recursos_propis_pct
+        st.caption(f"Crèdit: {viab_credit_pct:.1f}% (derivat de 100% − recursos propis).")
 
-    if estatic["solar1"] < 0:
-        st.error("El cost del sòl surt negatiu amb la rendibilitat objectiu triada. Redueix el percentatge de rendibilitat.")
+    if not _viab_solar_missing:
+        _viab_mode = "rentabilitat" if viab_metode == "Fixar rendibilitat abans d'impostos i interessos" else "preu_solar"
+        _viab_pct_kwargs = dict(
+            recursos_propis_pct=viab_recursos_propis_pct / 100, credit_pct=viab_credit_pct / 100,
+            otros_solar_pct=viab_otros_solar_pct / 100, honoraris_pct=viab_honoraris_pct / 100,
+            llicencies_pct=viab_llicencies_pct / 100, gastos_legals_pct=viab_gastos_legals_pct / 100,
+            altres_edif_pct=viab_altres_edif_pct / 100, admin_promocio_pct=viab_admin_promocio_pct / 100,
+            comercialitzacio_pct=viab_comercialitzacio_pct / 100, gastos_constitucio_pct=viab_gastos_constitucio_pct / 100,
+        )
+        estatic_pre = _viab_calcul_estatic(
+            _viab_mode, viab_superficie, viab_preciom2, viab_costem2, viab_tipo_interes,
+            rentabilidad_pct=viab_rendibilitat, preu_solar_manual=viab_preu_solar_manual, intereses_hipoteca=0.0,
+            **_viab_pct_kwargs,
+        )
+        dinamic_df, total_intereses = _viab_calcul_dinamic(
+            estatic_pre, curves, quarters, viab_tipo_interes,
+            iva_solar_pct=viab_iva_solar_pct / 100, iva_edificacio_pct=viab_iva_edificacio_pct / 100,
+            credit_pct=viab_credit_pct / 100,
+        )
+        estatic = _viab_calcul_estatic(
+            _viab_mode, viab_superficie, viab_preciom2, viab_costem2, viab_tipo_interes,
+            rentabilidad_pct=viab_rendibilitat, preu_solar_manual=viab_preu_solar_manual, intereses_hipoteca=total_intereses,
+            **_viab_pct_kwargs,
+        )
 
-    st.markdown("")
-    st.markdown('<div id="viab-estatic" class="viab-anchor"></div>', unsafe_allow_html=True)
-    st.subheader("ANÀLISI ESTÀTIC — COMPTE DE RESULTATS")
-    left, right = st.columns((1, 1))
-    with left:
-        st.markdown("**GASTOS**")
-        st_metric(label="Sòl (+ altres costes del sòl)", value=f"{estatic['total_solar']:,.0f} €")
-        st_metric(label="Edificació (+ honoraris, llicències, gastos legals, altres)", value=f"{estatic['total_edificacion']:,.0f} €")
-        st_metric(label="Administració de la promoció", value=f"{estatic['admin1']:,.0f} €")
-        st_metric(label="Comercialització", value=f"{estatic['admin2']:,.0f} €")
-        st_metric(label="**TOTAL GASTOS**", value=f"{estatic['total_gastos']:,.0f} €")
-    with right:
-        st.markdown("**INGRESSOS I RESULTAT**")
-        st_metric(label="Ingressos per vendes", value=f"{estatic['ingresos']:,.0f} €")
-        st_metric(label="**BAII** (abans d'impostos i interessos)", value=f"{estatic['baii']:,.0f} €")
-        st_metric(label="Interessos hipoteca", value=f"{total_intereses:,.0f} €")
-        st_metric(label="Gastos de constitució", value=f"{estatic['gastos_constitucio']:,.0f} €")
-        st_metric(label="**BAI** (abans d'impostos)", value=f"{estatic['bai']:,.0f} €")
+        if estatic["solar1"] < 0:
+            st.error("El cost del sòl surt negatiu amb la rendibilitat objectiu triada. Redueix el percentatge de rendibilitat.")
 
-    st.markdown("")
-    st.markdown('<div id="viab-dinamic" class="viab-anchor"></div>', unsafe_allow_html=True)
-    st.subheader("ANÀLISI DINÀMIC — CASH FLOWS TRIMESTRALS")
-    dinamic_display = dinamic_df.copy()
-    dinamic_display["TOTAL"] = dinamic_display.sum(axis=1)
-    st.markdown(taula_html_es(dinamic_display.round(0), precision=0), unsafe_allow_html=True)
-    st.markdown(filedownload(dinamic_display, "Viabilitat_cashflows.xlsx"), unsafe_allow_html=True)
+        st.markdown("")
+        st.markdown('<div id="viab-estatic" class="viab-anchor"></div>', unsafe_allow_html=True)
+        st.subheader("ANÀLISI ESTÀTIC — COMPTE DE RESULTATS")
+        left, right = st.columns((1, 1))
+        with left:
+            st.markdown("**DESPESES**")
+            st_metric(label="Sòl (+ altres costos del sòl)", value=f"{estatic['total_solar']:,.0f} €")
+            st_metric(label="Edificació (+ honoraris, llicències, despeses legals, altres)", value=f"{estatic['total_edificacion']:,.0f} €")
+            st_metric(label="Administració de la promoció", value=f"{estatic['admin1']:,.0f} €")
+            st_metric(label="Comercialització", value=f"{estatic['admin2']:,.0f} €")
+            st_metric(label="**TOTAL DESPESES**", value=f"{estatic['total_gastos']:,.0f} €")
+        with right:
+            st.markdown("**INGRESSOS I RESULTAT**")
+            st_metric(label="Ingressos per vendes", value=f"{estatic['ingresos']:,.0f} €")
+            st_metric(label="**BAII** (abans d'impostos i interessos)", value=f"{estatic['baii']:,.0f} €")
+            st_metric(label="Interessos hipoteca", value=f"{total_intereses:,.0f} €")
+            st_metric(label="Despeses de constitució", value=f"{estatic['gastos_constitucio']:,.0f} €")
+            st_metric(label="**BAI** (abans d'impostos)", value=f"{estatic['bai']:,.0f} €")
 
-    left, right = st.columns((1, 1))
-    with left:
-        _viab_fig1 = go.Figure()
-        _viab_fig1.add_trace(go.Bar(x=quarters, y=dinamic_df.loc["CASH FLOW ANTES FINANCIACIÓN", quarters], name="Abans de finançament", marker=dict(color=PLOTLY_PALETTE[0])))
-        _viab_fig1.add_trace(go.Scatter(x=quarters, y=dinamic_df.loc["CASH FLOW ANTES FINANCIACIÓN ACUM", quarters], name="Acumulat", mode="lines+markers", line=dict(color=PLOTLY_PALETTE[1])))
-        _viab_fig1.update_layout(_plotly_layout("Cash flow abans de finançament", "€", title_x="Trimestre"))
-        st_plotly_chart(_viab_fig1, use_container_width=True, responsive=True)
-    with right:
-        _viab_fig2 = go.Figure()
-        _viab_fig2.add_trace(go.Bar(x=quarters, y=dinamic_df.loc["CASH FLOW DESPUÉS DE FINANCIACIÓN", quarters], name="Després de finançament", marker=dict(color=PLOTLY_PALETTE[0])))
-        _viab_fig2.add_trace(go.Scatter(x=quarters, y=dinamic_df.loc["CASH FLOW DESPUÉS DE FINANCIACIÓN ACUM", quarters], name="Acumulat", mode="lines+markers", line=dict(color=PLOTLY_PALETTE[1])))
-        _viab_fig2.update_layout(_plotly_layout("Cash flow després de finançament", "€", title_x="Trimestre"))
-        st_plotly_chart(_viab_fig2, use_container_width=True, responsive=True)
+        st.markdown("")
+        st.markdown('<div id="viab-dinamic" class="viab-anchor"></div>', unsafe_allow_html=True)
+        st.subheader("ANÀLISI DINÀMIC — CASH FLOWS TRIMESTRALS")
+        dinamic_display = dinamic_df.copy()
+        dinamic_display["TOTAL"] = dinamic_display.sum(axis=1)
+        st.markdown(taula_html_es(dinamic_display.round(0), precision=0), unsafe_allow_html=True)
+        st.markdown(filedownload(dinamic_display, "Viabilitat_cashflows.xlsx"), unsafe_allow_html=True)
 
-    st.markdown("")
-    st.markdown('<div id="viab-resum" class="viab-anchor"></div>', unsafe_allow_html=True)
-    st.subheader("RESUM DE RESULTATS")
-    _viab_cf_despues = dinamic_df.loc["CASH FLOW DESPUÉS DE FINANCIACIÓN", quarters]
-    _viab_cf_despues_acum = dinamic_df.loc["CASH FLOW DESPUÉS DE FINANCIACIÓN ACUM", quarters]
-    _viab_tir = _viab_calcula_tir(_viab_cf_despues.values)
-    _viab_payback = _viab_calcula_payback(_viab_cf_despues_acum)
-    _viab_roe = (estatic["bai"] / estatic["recursos_propis"]) * 100 if estatic["recursos_propis"] else np.nan
-    _viab_roi = (estatic["baii"] / estatic["total_gastos"]) * 100 if estatic["total_gastos"] else np.nan
+        left, right = st.columns((1, 1))
+        with left:
+            _viab_fig1 = go.Figure()
+            _viab_fig1.add_trace(go.Bar(x=quarters, y=dinamic_df.loc["CASH FLOW ABANS DE FINANÇAMENT", quarters], name="Abans de finançament", marker=dict(color=PLOTLY_PALETTE[0])))
+            _viab_fig1.add_trace(go.Scatter(x=quarters, y=dinamic_df.loc["CASH FLOW ABANS DE FINANÇAMENT ACUM", quarters], name="Acumulat", mode="lines+markers", line=dict(color=PLOTLY_PALETTE[1])))
+            _viab_fig1.update_layout(_plotly_layout("Cash flow abans de finançament", "€", title_x="Trimestre"))
+            st_plotly_chart(_viab_fig1, use_container_width=True, responsive=True)
+        with right:
+            _viab_fig2 = go.Figure()
+            _viab_fig2.add_trace(go.Bar(x=quarters, y=dinamic_df.loc["CASH FLOW DESPRÉS DE FINANÇAMENT", quarters], name="Després de finançament", marker=dict(color=PLOTLY_PALETTE[0])))
+            _viab_fig2.add_trace(go.Scatter(x=quarters, y=dinamic_df.loc["CASH FLOW DESPRÉS DE FINANÇAMENT ACUM", quarters], name="Acumulat", mode="lines+markers", line=dict(color=PLOTLY_PALETTE[1])))
+            _viab_fig2.update_layout(_plotly_layout("Cash flow després de finançament", "€", title_x="Trimestre"))
+            st_plotly_chart(_viab_fig2, use_container_width=True, responsive=True)
 
-    left, center, right = st.columns((1, 1, 1))
-    with left:
-        st_metric(label="**BAI**", value=f"{estatic['bai']:,.0f} €")
-        st_metric(label="**ROE** (retorn recursos propis)", value=f"{_viab_roe:.1f}%" if pd.notna(_viab_roe) else "No disponible")
-    with center:
-        st_metric(label="**ROI** (retorn de la inversió)", value=f"{_viab_roi:.1f}%" if pd.notna(_viab_roi) else "No disponible")
-        st_metric(label="**TIR** anualitzada", value=f"{_viab_tir:.1f}%" if pd.notna(_viab_tir) else "No disponible")
-    with right:
-        st_metric(label="**Payback**", value=str(_viab_payback) if _viab_payback else "No s'assoleix en el període")
+        st.markdown("")
+        st.markdown('<div id="viab-resum" class="viab-anchor"></div>', unsafe_allow_html=True)
+        st.subheader("RESUM DE RESULTATS")
+        _viab_cf_despues = dinamic_df.loc["CASH FLOW DESPRÉS DE FINANÇAMENT", quarters]
+        _viab_cf_despues_acum = dinamic_df.loc["CASH FLOW DESPRÉS DE FINANÇAMENT ACUM", quarters]
+        _viab_tir = _viab_calcula_tir(_viab_cf_despues.values)
+        _viab_payback = _viab_calcula_payback(_viab_cf_despues_acum)
+        _viab_roe = (estatic["bai"] / estatic["recursos_propis"]) * 100 if estatic["recursos_propis"] else np.nan
+        _viab_roi = (estatic["baii"] / estatic["total_gastos"]) * 100 if estatic["total_gastos"] else np.nan
 
-    _viab_inputs_df = pd.DataFrame({
-        "Camp": [
-            "Municipi del solar", "Superfície construïda (m²)", "Data d'inici de l'operació",
-            "Tipus d'interès (%)", "Cost mitjà del m² construït - BEC (€)", f"Preu de venda per m² ({viab_mun}) (€)",
-            "Mètode de càlcul del sòl", "Rendibilitat objectiu (%)", "Cost del sòl fixat manualment (€)",
-        ],
-        "Valor": [
-            viab_mun, viab_superficie, str(viab_data_inici),
-            viab_tipo_interes, viab_costem2, viab_preciom2,
-            viab_metode, viab_rendibilitat, viab_preu_solar_manual,
-        ],
-    })
-    _viab_estatic_df = pd.DataFrame({
-        "Concepte": [
-            "Sòl (+ altres costes del sòl)", "Edificació (+ honoraris, llicències, gastos legals, altres)",
-            "Administració de la promoció", "Comercialització", "TOTAL GASTOS",
-            "Ingressos per vendes", "BAII (abans d'impostos i interessos)", "Interessos hipoteca",
-            "Gastos de constitució", "BAI (abans d'impostos)",
-        ],
-        "Import (€)": [
-            estatic["total_solar"], estatic["total_edificacion"], estatic["admin1"], estatic["admin2"], estatic["total_gastos"],
-            estatic["ingresos"], estatic["baii"], total_intereses, estatic["gastos_constitucio"], estatic["bai"],
-        ],
-    })
-    _viab_resum_df = pd.DataFrame({
-        "Indicador": ["BAI (€)", "ROE - retorn recursos propis (%)", "ROI - retorn de la inversió (%)", "TIR anualitzada (%)", "Payback"],
-        "Valor": [estatic["bai"], _viab_roe, _viab_roi, _viab_tir, str(_viab_payback) if _viab_payback else "No s'assoleix en el període"],
-    })
+        left, center, right = st.columns((1, 1, 1))
+        with left:
+            st_metric(label="**BAI**", value=f"{estatic['bai']:,.0f} €")
+            st_metric(label="**ROE** (retorn recursos propis)", value=f"{_viab_roe:.1f}%" if pd.notna(_viab_roe) else "No disponible")
+        with center:
+            st_metric(label="**ROI** (retorn de la inversió)", value=f"{_viab_roi:.1f}%" if pd.notna(_viab_roi) else "No disponible")
+            st_metric(label="**TIR** anualitzada", value=f"{_viab_tir:.1f}%" if pd.notna(_viab_tir) else "No disponible")
+        with right:
+            st_metric(label="**Payback**", value=str(_viab_payback) if _viab_payback else "No s'assoleix en el període")
 
-    def _viab_build_resum_excel():
-        towrite = io.BytesIO()
-        with pd.ExcelWriter(towrite) as writer:
-            _viab_inputs_df.to_excel(writer, sheet_name="Dades d'entrada", index=False, header=True)
-            _viab_curves_edited.to_excel(writer, sheet_name="Corbes trimestrals (%)", index=True, header=True)
-            _viab_estatic_df.to_excel(writer, sheet_name="Anàlisi estàtic", index=False, header=True)
-            dinamic_display.to_excel(writer, sheet_name="Anàlisi dinàmic", index=True, header=True)
-            _viab_resum_df.to_excel(writer, sheet_name="Resum de resultats", index=False, header=True)
-        towrite.seek(0)
-        b64 = base64.b64encode(towrite.read()).decode("latin-1")
-        return f'''<a href="data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,{b64}" download="Viabilitat_resum_complet.xlsx">
-        <button class="download-button">Descarregar resum complet (Excel)</button></a>'''
+        _viab_inputs_df = pd.DataFrame({
+            "Camp": [
+                "Municipi del solar", "Superfície construïda (m²)", "Data d'inici de l'operació",
+                "Tipus d'interès (%)", "Cost mitjà del m² construït - BEC (€)", f"Preu de venda per m² ({viab_mun}) (€)",
+                "Mètode de càlcul del sòl", "Rendibilitat objectiu (%)", "Cost del sòl fixat manualment (€)",
+            ],
+            "Valor": [
+                viab_mun, viab_superficie, str(viab_data_inici),
+                viab_tipo_interes, viab_costem2, viab_preciom2,
+                viab_metode, viab_rendibilitat, viab_preu_solar_manual,
+            ],
+        })
+        _viab_hipotesis_df = pd.DataFrame({
+            "Hipòtesi": [
+                "Recursos propis (%)", "Crèdit (%)", "Honoraris tècnics (%)", "Administració de la promoció (%)",
+                "IVA solar (%)", "Altres costos del sòl (%)", "Llicències (%)", "Comercialització (%)",
+                "IVA edificació (%)", "Despeses legals (%)", "Altres costos edificació (%)",
+                "Despeses de constitució del crèdit (%)",
+            ],
+            "Valor (%)": [
+                viab_recursos_propis_pct, viab_credit_pct, viab_honoraris_pct, viab_admin_promocio_pct,
+                viab_iva_solar_pct, viab_otros_solar_pct, viab_llicencies_pct, viab_comercialitzacio_pct,
+                viab_iva_edificacio_pct, viab_gastos_legals_pct, viab_altres_edif_pct, viab_gastos_constitucio_pct,
+            ],
+        })
+        _viab_estatic_df = pd.DataFrame({
+            "Concepte": [
+                "Sòl (+ altres costos del sòl)", "Edificació (+ honoraris, llicències, despeses legals, altres)",
+                "Administració de la promoció", "Comercialització", "TOTAL DESPESES",
+                "Ingressos per vendes", "BAII (abans d'impostos i interessos)", "Interessos hipoteca",
+                "Despeses de constitució", "BAI (abans d'impostos)",
+            ],
+            "Import (€)": [
+                estatic["total_solar"], estatic["total_edificacion"], estatic["admin1"], estatic["admin2"], estatic["total_gastos"],
+                estatic["ingresos"], estatic["baii"], total_intereses, estatic["gastos_constitucio"], estatic["bai"],
+            ],
+        })
+        _viab_resum_df = pd.DataFrame({
+            "Indicador": ["BAI (€)", "ROE - retorn recursos propis (%)", "ROI - retorn de la inversió (%)", "TIR anualitzada (%)", "Payback"],
+            "Valor": [estatic["bai"], _viab_roe, _viab_roi, _viab_tir, str(_viab_payback) if _viab_payback else "No s'assoleix en el període"],
+        })
 
-    st.markdown("")
-    st.markdown(_viab_build_resum_excel(), unsafe_allow_html=True)
+        def _viab_build_resum_excel():
+            from openpyxl.styles import Font, PatternFill, Alignment
+            from openpyxl.utils import get_column_letter
+
+            BRAND_FILL = PatternFill(start_color="C1571E", end_color="C1571E", fill_type="solid")
+            BRAND_FONT = Font(color="FFFFFF", bold=True)
+            TOTAL_FILL = PatternFill(start_color="E3A94C", end_color="E3A94C", fill_type="solid")
+
+            def _style_header(ws):
+                for cell in ws[1]:
+                    cell.fill = BRAND_FILL
+                    cell.font = BRAND_FONT
+                    cell.alignment = Alignment(horizontal="center", vertical="center")
+
+            def _autofit(ws):
+                for col_idx in range(1, ws.max_column + 1):
+                    letter = get_column_letter(col_idx)
+                    max_len = max((len(str(ws.cell(r, col_idx).value)) for r in range(1, ws.max_row + 1) if ws.cell(r, col_idx).value is not None), default=8)
+                    ws.column_dimensions[letter].width = min(max(max_len + 2, 10), 40)
+
+            def _format_label_value(ws):
+                # Els valors barregen text, €, % i m² dins la mateixa columna "Valor": el format
+                # es decideix mirant la unitat entre parèntesis de l'etiqueta de cada fila.
+                for label_cell, value_cell in ws.iter_rows(min_row=2, min_col=1, max_col=2):
+                    if not isinstance(value_cell.value, (int, float)):
+                        continue
+                    label = str(label_cell.value or "")
+                    if "(%)" in label:
+                        value_cell.number_format = '0.0"%"'
+                    elif "(€)" in label:
+                        value_cell.number_format = '#,##0 €'
+                    elif "(m²)" in label:
+                        value_cell.number_format = '#,##0" m²"'
+
+            def _format_block(ws, fmt, min_row=2, min_col=1):
+                for row in ws.iter_rows(min_row=min_row, min_col=min_col):
+                    for cell in row:
+                        if isinstance(cell.value, (int, float)):
+                            cell.number_format = fmt
+
+            def _highlight_total_column(ws):
+                total_col = next((c.column for c in ws[1] if c.value == "TOTAL"), None)
+                if total_col is None:
+                    return
+                for row in ws.iter_rows(min_row=2, min_col=total_col, max_col=total_col):
+                    for cell in row:
+                        cell.font = Font(bold=True)
+                        cell.fill = TOTAL_FILL
+
+            towrite = io.BytesIO()
+            with pd.ExcelWriter(towrite, engine="openpyxl") as writer:
+                _viab_resum_df.to_excel(writer, sheet_name="Resum de resultats", index=False, header=True)
+                _viab_inputs_df.to_excel(writer, sheet_name="Dades d'entrada", index=False, header=True)
+                _viab_hipotesis_df.to_excel(writer, sheet_name="Hipòtesis (%)", index=False, header=True)
+                _viab_curves_edited.to_excel(writer, sheet_name="Corbes trimestrals (%)", index=True, header=True)
+                _viab_estatic_df.to_excel(writer, sheet_name="Anàlisi estàtic", index=False, header=True)
+                dinamic_display.to_excel(writer, sheet_name="Anàlisi dinàmic", index=True, header=True)
+
+                ws_resum = writer.sheets["Resum de resultats"]
+                _style_header(ws_resum)
+                _format_label_value(ws_resum)
+                ws_resum.freeze_panes = "A2"
+
+                ws_inputs = writer.sheets["Dades d'entrada"]
+                _style_header(ws_inputs)
+                _format_label_value(ws_inputs)
+                ws_inputs.freeze_panes = "A2"
+
+                ws_hip = writer.sheets["Hipòtesis (%)"]
+                _style_header(ws_hip)
+                _format_block(ws_hip, '0.0"%"', min_col=2)
+                ws_hip.freeze_panes = "A2"
+
+                ws_curves = writer.sheets["Corbes trimestrals (%)"]
+                _style_header(ws_curves)
+                _format_block(ws_curves, '0.0"%"', min_col=2)
+                ws_curves.freeze_panes = "B2"
+
+                ws_estatic = writer.sheets["Anàlisi estàtic"]
+                _style_header(ws_estatic)
+                _format_block(ws_estatic, '#,##0 €', min_col=2)
+                ws_estatic.freeze_panes = "A2"
+
+                ws_dinamic = writer.sheets["Anàlisi dinàmic"]
+                _style_header(ws_dinamic)
+                _format_block(ws_dinamic, '#,##0 €', min_col=2)
+                _highlight_total_column(ws_dinamic)
+                ws_dinamic.freeze_panes = "B2"
+
+                for ws in (ws_resum, ws_inputs, ws_hip, ws_curves, ws_estatic, ws_dinamic):
+                    _autofit(ws)
+
+            towrite.seek(0)
+            b64 = base64.b64encode(towrite.read()).decode("latin-1")
+            return f'''<a href="data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,{b64}" download="Viabilitat_resum_complet.xlsx">
+            <button class="download-button">Descarregar Resultats</button></a>'''
+
+        st.markdown("")
+        st.markdown(_viab_build_resum_excel(), unsafe_allow_html=True)
 
 ############################################################ ESTUDI D'OFERTA D'OBRA NOVA APCE (afegit) ############################################################
 # Integració autocontinguda de Z:\ESTUDIS\APP\Estudi-oferta\Estudi_oferta_atlas.py com a nova
@@ -6039,8 +6637,49 @@ def oferta_text_resum_mun_dis(df_hab, geo, columna_geo, any_estudi):
 
 
 def oferta_filedownload(df, filename):
+    from openpyxl.styles import Font, PatternFill, Alignment, Border
+    from openpyxl.utils import get_column_letter
+
+    header_rows = getattr(df.columns, "nlevels", 1)
+    sheet_name = re.sub(r'[\\/*?:\[\]]', "_", filename.rsplit(".", 1)[0])[:31] or "Dades"
+
+    BRAND_FILL = PatternFill(start_color="C1571E", end_color="C1571E", fill_type="solid")
+    BRAND_FONT = Font(color="FFFFFF", bold=True)
+    ZEBRA_FILL = PatternFill(start_color="E3A94C", end_color="E3A94C", fill_type="solid")
+    WHITE_FILL = PatternFill(start_color="FFFFFF", end_color="FFFFFF", fill_type="solid")
+    CENTER = Alignment(horizontal="center", vertical="center")
+    NO_BORDER = Border()
+
     towrite = io.BytesIO()
-    df.to_excel(towrite, index=True, header=True)
+    with pd.ExcelWriter(towrite, engine="openpyxl") as writer:
+        df.to_excel(writer, sheet_name=sheet_name, index=True, header=True)
+        ws = writer.sheets[sheet_name]
+        if header_rows > 1 and all(ws.cell(header_rows + 1, c).value is None for c in range(1, ws.max_column + 1)):
+            ws.delete_rows(header_rows + 1, 1)
+        data_start = header_rows + 1
+        for row in ws.iter_rows(min_row=1, max_row=header_rows):
+            for cell in row:
+                cell.fill = BRAND_FILL
+                cell.font = BRAND_FONT
+        for row in ws.iter_rows(min_row=data_start, max_row=ws.max_row, min_col=1, max_col=1):
+            for cell in row:
+                cell.fill = BRAND_FILL
+                cell.font = BRAND_FONT
+        for row_idx in range(data_start, ws.max_row + 1):
+            for col_idx in range(2, ws.max_column + 1):
+                cell = ws.cell(row_idx, col_idx)
+                if isinstance(cell.value, (int, float)):
+                    cell.number_format = "#,##0"
+                cell.fill = ZEBRA_FILL if (row_idx - data_start) % 2 == 1 else WHITE_FILL
+        for row in ws.iter_rows(min_row=1, max_row=ws.max_row):
+            for cell in row:
+                cell.alignment = CENTER
+                cell.border = NO_BORDER
+        for col_idx in range(1, ws.max_column + 1):
+            letter = get_column_letter(col_idx)
+            max_len = max((len(str(ws.cell(r, col_idx).value)) for r in range(1, ws.max_row + 1) if ws.cell(r, col_idx).value is not None), default=8)
+            ws.column_dimensions[letter].width = min(max(max_len + 2, 10), 40)
+        ws.freeze_panes = f"B{data_start}"
     towrite.seek(0)
     b64 = base64.b64encode(towrite.read()).decode("latin-1")
     return f'''<a href="data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,{b64}" download="{filename}">
@@ -6374,6 +7013,7 @@ def oferta_grafic_caracteristiques(df):
         return oferta_fig_no_disponible("Característiques", "No hi ha dades.")
     vals = df[OFERTA_VARIABLES_CARACTERISTIQUES].mean(numeric_only=True).reset_index()
     vals.columns = ["Característica", "Total"]
+    vals = vals[vals["Total"] > 0]  # amaga les característiques sense cap habitatge (files buides al gràfic)
     fig = px.bar(vals.sort_values("Total"), x="Total", y="Característica", orientation="h")
     fig.update_traces(marker=dict(color=OFERTA_COLOR_BARRES))
     return oferta_preparar_fig(fig)
@@ -6387,7 +7027,9 @@ def oferta_grafic_energetica(df):
     taula.columns = ["Grup", "Habitatges"]
     fig = px.pie(taula, values="Habitatges", names="Grup", hole=0.4, color_discrete_sequence=PLOTLY_PALETTE)
     fig.update_traces(textposition="outside", textinfo="percent+label")
-    return oferta_preparar_fig(fig)
+    fig = oferta_preparar_fig(fig)
+    fig.update_layout(margin=dict(l=80, r=80))  # marge extra perquè les etiquetes "outside" no es tallin
+    return fig
 
 
 @st.cache_data(show_spinner=False)
@@ -6395,9 +7037,12 @@ def oferta_grafic_calefaccio(df):
     cols = ["De gasoil", "De gas natural", "De propà", "D'electricitat", "No s'indica tipus"]
     taula = df[cols].sum().reset_index()
     taula.columns = ["Tipus", "Total"]
+    taula = taula[taula["Total"] > 0]  # amaga els tipus al 0%: si no, les etiquetes "outside" se solapen entre elles
     fig = px.pie(taula, values="Total", names="Tipus", hole=0.4, color_discrete_sequence=PLOTLY_PALETTE)
     fig.update_traces(textposition="outside", textinfo="percent+label", sort=False)
-    return oferta_preparar_fig(fig)
+    fig = oferta_preparar_fig(fig)
+    fig.update_layout(margin=dict(l=80, r=80))
+    return fig
 
 
 @st.cache_data(show_spinner=False)
@@ -6406,7 +7051,9 @@ def oferta_grafic_aparcament(df):
     taula.columns = ["Tipus", "Total"]
     fig = px.pie(taula, values="Total", names="Tipus", hole=0.4, color_discrete_sequence=[OFERTA_COLOR_CLAR, OFERTA_COLOR_FOSC])
     fig.update_traces(textposition="outside", textinfo="percent+label", sort=False)
-    return oferta_preparar_fig(fig)
+    fig = oferta_preparar_fig(fig)
+    fig.update_layout(margin=dict(l=80, r=80))  # marge extra perquè l'etiqueta "Amb plaça d'aparcament" no es talli
+    return fig
 
 
 @st.cache_data(show_spinner=False)
@@ -6537,13 +7184,13 @@ def oferta_mapa_punts_habitatges(punts, h=680):
     return m
 
 
-if selected == "Estudi d'oferta d'obra nova APCE":
+if selected == "Estudi d'Oferta Obra Nova":
     oferta_dades_totals = oferta_carregant_dades()
     oferta_dades_2025 = oferta_crear_bases_any(oferta_dades_totals, 2025)
     oferta_dades_2026 = oferta_crear_bases_any(oferta_dades_totals, 2026)
     oferta_df_final = oferta_construir_df_final(oferta_dades_totals)
 
-    st.subheader("ESTUDI D'OFERTA D'OBRA NOVA APCE")
+    st.subheader("ESTUDI D'OFERTA OBRA NOVA")
     st.markdown('<div class="oferta-menu-anchor"></div>', unsafe_allow_html=True)
     oferta_selected = st.radio("Secció", OFERTA_PAGINES, horizontal=True, label_visibility="collapsed", key="oferta_menu")
 
@@ -6657,13 +7304,13 @@ if selected == "Estudi d'oferta d'obra nova APCE":
         with fila_1_left:
             oferta_mostra("Proporció d'habitatges segons tipologia", oferta_grafic_tipologia_donut(df_geo))
         with fila_1_right:
-            oferta_mostra("Habitatges d'obra nova / rehabilitació integral", oferta_grafic_obra_nova(df_geo))
+            oferta_mostra("Qualitats i equipaments dels habitatges en oferta", oferta_grafic_qualitats_equipaments(df_geo))
 
         fila_2_left, fila_2_right = st.columns((1, 1))
         with fila_2_left:
-            oferta_mostra("Habitatges a la venda segons número d'habitacions", oferta_grafic_dormitoris(df_geo))
+            oferta_mostra("Habitatges a la venda segons nombre d'habitacions", oferta_grafic_dormitoris(df_geo))
         with fila_2_right:
-            oferta_mostra("Qualitats i equipaments dels habitatges en oferta", oferta_grafic_qualitats_equipaments(df_geo))
+            oferta_mostra("Habitatges a la venda segons nombre de lavabos", oferta_grafic_lavabos(df_geo))
 
     if oferta_selected == "Municipis":
         left, center = st.columns((0.8, 1.8))
@@ -6685,18 +7332,30 @@ if selected == "Estudi d'oferta d'obra nova APCE":
             oferta_mostra("Distribució de Superfície útil", oferta_grafic_distribucio(df_geo, "Superfície útil"))
         st.caption(OFERTA_NOTA_MEDIANA)
 
-        left_col, right_col = st.columns((1, 1))
-        with left_col:
+        taula_left, taula_right = st.columns((1, 1))
+        with taula_left:
             st.markdown("**Preus per m² útil segons nombre d'habitacions i lavabos**")
             st.markdown(oferta_matriu_hab_lav(df_geo, "Preu m2 útil").to_html(), unsafe_allow_html=True)
-            oferta_mostra("Característiques principals dels habitatges en oferta", oferta_grafic_caracteristiques(df_geo))
-            oferta_mostra("Qualitats i equipaments dels habitatges en oferta", oferta_grafic_qualitats_equipaments(df_geo))
-            oferta_mostra("Habitatges a la venda segons número d'habitacions", oferta_grafic_dormitoris(df_geo))
-        with right_col:
+        with taula_right:
             st.markdown("**Superfície en m² útils segons nombre d'habitacions i lavabos**")
             st.markdown(oferta_matriu_hab_lav(df_geo, "Superfície útil").to_html(), unsafe_allow_html=True)
+
+        hab_left, hab_right = st.columns((1, 1))
+        with hab_left:
+            oferta_mostra("Habitatges a la venda segons nombre d'habitacions", oferta_grafic_dormitoris(df_geo))
+        with hab_right:
+            oferta_mostra("Habitatges a la venda segons nombre de lavabos", oferta_grafic_lavabos(df_geo))
+
+        carac_left, carac_right = st.columns((1, 1))
+        with carac_left:
+            oferta_mostra("Característiques principals dels habitatges en oferta", oferta_grafic_caracteristiques(df_geo))
+        with carac_right:
+            oferta_mostra("Qualitats i equipaments dels habitatges en oferta", oferta_grafic_qualitats_equipaments(df_geo))
+
+        tipo_left, tipo_right = st.columns((1, 1))
+        with tipo_left:
             oferta_mostra("Proporció d'habitatges en oferta a les promocions segons tipologia (%)", oferta_grafic_tipologia_pie(df_geo))
-            oferta_mostra("Habitatges a la venda segons número de lavabos", oferta_grafic_lavabos(df_geo))
+        with tipo_right:
             oferta_mostra("Plaça d'aparcament inclosa o no en els habitatges en oferta (%)", oferta_grafic_aparcament(df_geo))
 
         energia_left, energia_right = st.columns((1, 1))
@@ -6747,18 +7406,30 @@ if selected == "Estudi d'oferta d'obra nova APCE":
                 oferta_mostra("Distribució de Superfície útil", oferta_grafic_distribucio(df_geo, "Superfície útil"))
             st.caption(OFERTA_NOTA_MEDIANA)
 
-            left_col, right_col = st.columns((1, 1))
-            with left_col:
+            taula_left, taula_right = st.columns((1, 1))
+            with taula_left:
                 st.markdown("**Preus per m² útil segons nombre d'habitacions i lavabos**")
                 st.markdown(oferta_matriu_hab_lav(df_geo, "Preu m2 útil").to_html(), unsafe_allow_html=True)
-                oferta_mostra("Característiques principals dels habitatges en oferta", oferta_grafic_caracteristiques(df_geo))
-                oferta_mostra("Qualitats i equipaments dels habitatges en oferta", oferta_grafic_qualitats_equipaments(df_geo))
-                oferta_mostra("Habitatges a la venda segons número d'habitacions", oferta_grafic_dormitoris(df_geo))
-            with right_col:
+            with taula_right:
                 st.markdown("**Superfície en m² útils segons nombre d'habitacions i lavabos**")
                 st.markdown(oferta_matriu_hab_lav(df_geo, "Superfície útil").to_html(), unsafe_allow_html=True)
+
+            hab_left, hab_right = st.columns((1, 1))
+            with hab_left:
+                oferta_mostra("Habitatges a la venda segons nombre d'habitacions", oferta_grafic_dormitoris(df_geo))
+            with hab_right:
+                oferta_mostra("Habitatges a la venda segons nombre de lavabos", oferta_grafic_lavabos(df_geo))
+
+            carac_left, carac_right = st.columns((1, 1))
+            with carac_left:
+                oferta_mostra("Característiques principals dels habitatges en oferta", oferta_grafic_caracteristiques(df_geo))
+            with carac_right:
+                oferta_mostra("Qualitats i equipaments dels habitatges en oferta", oferta_grafic_qualitats_equipaments(df_geo))
+
+            tipo_left, tipo_right = st.columns((1, 1))
+            with tipo_left:
                 oferta_mostra("Proporció d'habitatges en oferta a les promocions segons tipologia (%)", oferta_grafic_tipologia_pie(df_geo))
-                oferta_mostra("Habitatges a la venda segons número de lavabos", oferta_grafic_lavabos(df_geo))
+            with tipo_right:
                 oferta_mostra("Plaça d'aparcament inclosa o no en els habitatges en oferta (%)", oferta_grafic_aparcament(df_geo))
 
             energia_left, energia_right = st.columns((1, 1))
