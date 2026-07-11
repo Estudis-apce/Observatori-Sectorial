@@ -3,7 +3,7 @@
 # ---------------------------
 from datetime import datetime
 from pathlib import Path
-from typing import List, Tuple, Optional, Iterable, Union
+from typing import List, Tuple, Optional, Iterable
 import base64
 import io
 import json
@@ -20,7 +20,6 @@ matplotlib.use("Agg")  # Importante: antes de pyplot en entornos sin display (ej
 import matplotlib.pyplot as plt
 from matplotlib.ticker import MaxNLocator, FuncFormatter
 import matplotlib.colors as colors
-from mpl_toolkits.axes_grid1 import make_axes_locatable
 
 import plotly.express as px
 import plotly.graph_objects as go
@@ -29,11 +28,9 @@ import numpy_financial as npf
 import geopandas as gpd
 
 import streamlit as st
-import streamlit.components.v1 as components
 import folium
 from folium.plugins import FastMarkerCluster
 from streamlit_folium import st_folium
-from streamlit_folium import folium_static
 
 
 # ---------------------------
@@ -42,7 +39,6 @@ from streamlit_folium import folium_static
 from reportlab.lib import colors as rl_colors
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import cm
-from reportlab.lib.utils import ImageReader
 
 from reportlab.platypus import (
     SimpleDocTemplate,
@@ -203,7 +199,6 @@ TABLE_TRIM_START_YEAR = 2023
 TABLE_ANNUAL_START_YEAR = 2014
 SERIES_START_YEAR = 2014
 TITLE_SPACING_CM = 0.6
-BLOCK_SPACING_CM = 0.8
 # Mida de pàgina del PDF de l'informe de mercat: panoràmica 16:9 (com una diapositiva
 # de PowerPoint, 33,87 x 19,05 cm) en lloc de l'A4 apaïsat (29,7 x 21 cm, ràtio 1,41)
 # que es feia servir abans i que quedava massa "quadrat".
@@ -2466,15 +2461,6 @@ def indicator_year(df, df_aux, year, variable, tipus, frequency=None):
 # únic any/trimestre global. Sense @st.cache_data pel mateix motiu que
 # indicator_year: operen sobre columnes ja carregades, el cost real és
 # ínfim comparat amb el cost de fer-ne el hash.
-def last_valid_period(df, col, date_col="Fecha"):
-    """Valor de `date_col` a la darrera fila de `df` on `col` no és NaN
-    (Timestamp mensual, string de trimestre, o any). None si no hi ha dada."""
-    if col not in df.columns:
-        return None
-    valid = df.loc[df[col].notna(), date_col]
-    return valid.iloc[-1] if not valid.empty else None
-
-
 def last_closed_year(col, df_annual, df_quarterly=None, df_monthly=None, date_col="Fecha"):
     """Darrer any 'tancat' per a `col` a la taula anual `df_annual`: un any
     compta com a tancat si la seva font de més freqüència (mateixa columna a
@@ -2502,21 +2488,6 @@ def last_closed_year(col, df_annual, df_quarterly=None, df_monthly=None, date_co
             continue
         return year
     return None
-
-
-def format_period_label(value, frequency):
-    """Etiqueta llegible del darrer període disponible: 'Maig 2026' (mensual),
-    '2026 T2' (trimestral) o '2025' (anual)."""
-    if value is None:
-        return "Sense dades"
-    if frequency == "month":
-        mesos = ["Gener", "Febrer", "Març", "Abril", "Maig", "Juny", "Juliol",
-                 "Agost", "Setembre", "Octubre", "Novembre", "Desembre"]
-        ts = pd.Timestamp(value)
-        return f"{mesos[ts.month - 1]} {ts.year}"
-    if frequency == "quarter":
-        return str(value).replace("T", " T")
-    return str(int(value))
 
 
 def annual_upper_bound(col, df_annual=None, df_quarterly=None, df_monthly=None, default=None):
@@ -2826,6 +2797,27 @@ def bar_plotly_comparativa_anys(table_y, title_main, title_y_axis, year_actual, 
         traces.append(go.Bar(x=row.index.tolist(), y=row.values, name=y, marker=dict(color=colors[i % len(colors)])))
     layout = _plotly_layout(title_main, title_y_axis, barmode="group")
     return go.Figure(data=traces, layout=layout)
+
+def comparativa_render_metric(frames_trim, frames_y, metric, unit_label, filename_prefix, geo_suffix, year_actual, year_previous, trimestral=True):
+    """Pinta una mètrica de comparativa (taula trimestral+anual, descàrregues i gràfics):
+    compartit per Comarques/Municipis/Districtes/Províncies-Àmbits, que només difereixen
+    en `geo_suffix` (pel nom de fitxer) i en `year_actual`/`year_previous`."""
+    t_any = comparativa_metric_table(frames_y, metric)
+    st.markdown(f"**{metric}**")
+    if trimestral:
+        t_trim = comparativa_metric_table(frames_trim, metric)
+        st.markdown(comparativa_style_table(comparativa_display_trim(t_trim).T).to_html(), unsafe_allow_html=True)
+        st.markdown(filedownload(t_trim.T, f"Comparativa_{filename_prefix}_{geo_suffix}.xlsx"), unsafe_allow_html=True)
+    st.markdown(comparativa_style_table(t_any.T).to_html(), unsafe_allow_html=True)
+    st.markdown(filedownload(t_any.T, f"Comparativa_{filename_prefix}_{geo_suffix}_anual.xlsx"), unsafe_allow_html=True)
+    if trimestral:
+        left_col, right_col = st.columns((1, 1))
+        with left_col:
+            st_plotly_chart(line_plotly(t_trim, t_trim.columns.tolist(), f"Evolució trimestral — {metric}", unit_label), use_container_width=True, responsive=True)
+        with right_col:
+            st_plotly_chart(bar_plotly_comparativa_anys(t_any, f"Comparativa anual — {metric}", unit_label, year_actual, year_previous), use_container_width=True, responsive=True)
+    else:
+        st_plotly_chart(bar_plotly_comparativa_anys(t_any, f"Comparativa anual — {metric}", unit_label, year_actual, year_previous), use_container_width=True, responsive=True)
 
 def bar_plotly_comparativa_100(serie_a, serie_b, label_a, label_b, title_main, year_label):
     """100% apilat per ubicació (p. ex. proporció segona mà vs obra nova de compravendes)."""
@@ -3303,9 +3295,9 @@ if selected == "Espanya":
         selected_type = st.radio("**Selecciona un tipus d'indicador**", ("Sector residencial","Indicadors econòmics"), horizontal=True)
     with center:
         if selected_type=="Indicadors econòmics":
-            selected_index = st.selectbox("**Selecciona un indicador:**", ["Índex de Preus al Consum (IPC)", "Consum de ciment","Tipus d'interès", "Hipoteques"], key=101)
+            selected_index = st.selectbox("**Selecciona un indicador:**", ["Índex de Preus al Consum (IPC)", "Consum de ciment","Tipus d'interès", "Hipoteques"], key="espanya_indicador_economic")
         if selected_type=="Sector residencial":
-            selected_index = st.selectbox("**Selecciona un indicador:**", ["Producció", "Compravendes", "Preus"], key=201)
+            selected_index = st.selectbox("**Selecciona un indicador:**", ["Producció", "Compravendes", "Preus"], key="espanya_indicador_residencial")
     with right:
         # Cada indicador d'aquesta pestanya té la seva pròpia freqüència de
         # publicació (IPC/Euríbor/Hipoteques solen tenir dada abans que
@@ -3321,7 +3313,7 @@ if selected == "Espanya":
             "Hipoteques": "hipon_Nacional",
         }.get(selected_index, "iniviv_Nacional")
         available_years, index_year = year_selector_options(_ref_col_espanya, df_quarterly=DT_terr, df_monthly=DT_monthly, df_annual=DT_terr_y)
-        selected_year_n = st.selectbox("**Selecciona un any:**", available_years, available_years.index(index_year), key=102)
+        selected_year_n = st.selectbox("**Selecciona un any:**", available_years, available_years.index(index_year), key="espanya_any")
 
     if selected_type=="Indicadors econòmics":
         if selected_index=="Índex de Preus al Consum (IPC)":
@@ -3663,14 +3655,14 @@ if selected == "Espanya":
 if selected == "Catalunya":
     left, center, right= st.columns((1,1,1))
     with left:
-        selected_indicator = st.radio("**Selecciona un tipus d'indicador**", ("Sector residencial","Indicadors econòmics"), horizontal=True, key=301)
+        selected_indicator = st.radio("**Selecciona un tipus d'indicador**", ("Sector residencial","Indicadors econòmics"), horizontal=True, key="catalunya_tipus_indicador")
         if selected_indicator=="Sector residencial":
             selected_type = st.radio("**Mercat de venda o lloguer**", ("Venda", "Lloguer"), horizontal=True)
     with center:
         if (selected_indicator=="Indicadors econòmics"):
-            selected_index = st.selectbox("**Selecciona un indicador:**", ["Costos de construcció", "Mercat laboral", "Consum de Ciment", "Hipoteques"], key=302)
+            selected_index = st.selectbox("**Selecciona un indicador:**", ["Costos de construcció", "Mercat laboral", "Consum de Ciment", "Hipoteques"], key="catalunya_indicador_economic")
         if ((selected_indicator=="Sector residencial")):
-            selected_index = st.selectbox("**Selecciona un indicador:**", ["Producció", "Compravendes", "Preus", "Superfície"], key=303)
+            selected_index = st.selectbox("**Selecciona un indicador:**", ["Producció", "Compravendes", "Preus", "Superfície"], key="catalunya_indicador_residencial")
         # if (selected_type=="Lloguer") and (selected_indicator=="Sector residencial"):
         #     st.write("")
         
@@ -3690,7 +3682,7 @@ if selected == "Catalunya":
             "Hipoteques": "hipon_Catalunya",
         }.get(selected_index, "iniviv_Catalunya")
         available_years, index_year = year_selector_options(_ref_col_catalunya, df_quarterly=DT_terr, df_monthly=DT_monthly, df_annual=DT_terr_y)
-        selected_year_n = st.selectbox("**Selecciona un any:**", available_years, available_years.index(index_year), key=305)
+        selected_year_n = st.selectbox("**Selecciona un any:**", available_years, available_years.index(index_year), key="catalunya_any")
 
     if selected_indicator=="Indicadors econòmics":
         if selected_index=="Mercat laboral":
@@ -3742,12 +3734,6 @@ if selected == "Catalunya":
             with right:
                 st_metric(label="**Unifamiliar de dos plantes entre mitjaneres** (€/m\u00b2)", value=f"""{indicator_year(table_catalunya_y, table_catalunya_q, str(selected_year_n), "Unifamiliar de dos plantes entre mitjaneres", "level"):,.0f}""", delta=f"""{indicator_year(table_catalunya_y, table_catalunya_q, str(selected_year_n), "Unifamiliar de dos plantes entre mitjaneres", "var")}%""")
                 st_metric(label="**Edifici d’oficines entre mitjaneres** (€/m\u00b2)", value=f"""{indicator_year(table_catalunya_y, table_catalunya_q, str(selected_year_n), "Edifici d’oficines entre mitjaneres", "level"):,.0f}""", delta=f"""{indicator_year(table_catalunya_y, table_catalunya_q, str(selected_year_n), "Edifici d’oficines entre mitjaneres", "var")}%""")
-            desc_bec_aux = """Els preus per m² construït inclouen l’estudi de seguretat i salut, els honoraris tècnics i permisos d’obra amb un benefici industrial del 20% i despeses generals. Addicionalment, 
-            cal comentar que aquests preus fan referència a la província de Barcelona. Si la ubicació de l'obra es troba en una província diferent, la disminució dels preus serà d'un 6% a 8% a Girona, 8% a 10% a Tarragona i del 12% a 15% a Lleida."""
-            # desc_bec = f'<div style="text-align: justify">{desc_bec_aux}</div>'
-            # st.markdown(desc_bec, unsafe_allow_html=True)
-            # st.markdown("")
-            # st.markdown(f"""<a href="https://drive.google.com/file/d/1ArRHGTPnDjI2gq9iaGhL4MQK7SbIDNDb/" target="_blank"><button class="download-button">Descarregar BEC</button></a>""", unsafe_allow_html=True)
             st.markdown("")
             st.markdown("")
             # st.subheader("**DADES TRIMESTRALS MÉS RECENTS**")
@@ -4078,19 +4064,102 @@ if selected == "Províncies i àmbits":
     ambit_names = ["Alt Pirineu i Aran","Camp de Tarragona","Comarques centrals","Comarques gironines","Metropolità","Penedès","Ponent","Terres de l'Ebre"]
     left, center, right= st.columns((1,1,1))
     with left:
-        selected_type = st.radio("**Mercat de venda o lloguer**", ("Venda", "Lloguer"), horizontal=True, key=400)
-        selected_option = st.radio("**Selecciona un tipus d'àrea geogràfica:**", ["Províncies", "Àmbits territorials"], key=401)
+        selected_type = st.radio("**Mercat de venda o lloguer**", ("Venda", "Lloguer"), horizontal=True, key="provambit_tipus_mercat")
+        selected_option = st.radio("**Selecciona un tipus d'àrea geogràfica:**", ["Províncies", "Àmbits territorials"], key="provambit_tipus_area")
     with center:
         if selected_option=="Províncies":
             selected_geo = st.selectbox('**Selecciona una província:**', prov_names, index= prov_names.index("Barcelona"))
         if selected_option=="Àmbits territorials":
-            selected_geo = st.selectbox('**Selecciona un àmbit territorial:**', ambit_names, index= ambit_names.index("Metropolità"), key=402)
+            selected_geo = st.selectbox('**Selecciona un àmbit territorial:**', ambit_names, index= ambit_names.index("Metropolità"), key="provambit_selector_ambit")
         if selected_type=="Venda":
-            selected_index = st.selectbox("**Selecciona un indicador:**", ["Producció", "Compravendes", "Preus", "Superfície"], key=403)
+            selected_index = st.selectbox("**Selecciona un indicador:**", ["Producció", "Compravendes", "Preus", "Superfície"], key="provambit_indicador")
     with right:
         available_years, index_year = year_selector_options(f"iniviv_{selected_geo}", df_quarterly=DT_terr, df_annual=DT_terr_y)
-        selected_year_n = st.selectbox("**Selecciona un any:**", available_years, available_years.index(index_year), key=404)
+        selected_year_n = st.selectbox("**Selecciona un any:**", available_years, available_years.index(index_year), key="provambit_any")
+        if selected_type=="Venda":
+            st.markdown('<div class="comparativa-toggle-anchor"></div>', unsafe_allow_html=True)
+            provambit_comparativa_on = st.toggle(f"📊 Comparativa entre {'províncies' if selected_option=='Províncies' else 'àmbits territorials'}", key="provambit_comparativa_toggle")
     if selected_type=="Venda":
+        if provambit_comparativa_on:
+            pa_locations_opcions = prov_names if selected_option == "Províncies" else ambit_names
+            pa_label_singular = "província" if selected_option == "Províncies" else "àmbit territorial"
+            pa_label_plural = "províncies" if selected_option == "Províncies" else "àmbits territorials"
+            pa_suffix = "provincies" if selected_option == "Províncies" else "ambits"
+            pa_bulk_label = f"Selecciona totes les {pa_label_plural}" if selected_option == "Províncies" else f"Selecciona tots els {pa_label_plural}"
+            if "provambit_comparativa_multiselect" not in st.session_state:
+                st.session_state["provambit_comparativa_multiselect"] = [selected_geo] if selected_geo in pa_locations_opcions else []
+            else:
+                st.session_state["provambit_comparativa_multiselect"] = [v for v in st.session_state["provambit_comparativa_multiselect"] if v in pa_locations_opcions]
+            comp_pa_col1, comp_pa_col2 = st.columns((2, 1))
+            with comp_pa_col2:
+                st.markdown('<div style="height:28px"></div>', unsafe_allow_html=True)
+                if st.button(pa_bulk_label, key="provambit_comparativa_add_all"):
+                    st.session_state["provambit_comparativa_multiselect"] = pa_locations_opcions[:15]
+            with comp_pa_col1:
+                comp_pa_locations = st.multiselect(
+                    f"**Selecciona {pa_label_plural} a comparar:**", pa_locations_opcions,
+                    max_selections=15, key="provambit_comparativa_multiselect",
+                )
+            if len(comp_pa_locations) < 2:
+                st.info(f"Selecciona com a mínim 2 {pa_label_plural} per veure la comparativa.")
+            else:
+                st.markdown(
+                    '<div class="viab-toc">'
+                    '<a href="#comp-pa-prod-iniacab">Producció: iniciats i acabats</a>'
+                    '<a href="#comp-pa-prod-hpo">Producció: qualificacions HPO</a>'
+                    '<a href="#comp-pa-compravendes">Compravendes</a>'
+                    '<a href="#comp-pa-preus">Preus</a>'
+                    '<a href="#comp-pa-superficie">Superfície</a>'
+                    '</div>', unsafe_allow_html=True,
+                )
+                _comp_pa_year_actual = LAST_CLOSED_YEAR
+                _comp_pa_year_previous = LAST_CLOSED_YEAR - 1
+
+                st.markdown('<div id="comp-pa-prod-iniacab" class="viab-anchor"></div>', unsafe_allow_html=True)
+                st.subheader("COMPARATIVA — PRODUCCIÓ: INICIATS I ACABATS")
+                _frames_pa_prod = comparativa_build_frames(["iniviv_", "finviv_"], comp_pa_locations, ["Habitatges iniciats", "Habitatges acabats"], 2008)
+                _frames_pa_prod_y = comparativa_build_frames(["iniviv_", "finviv_"], comp_pa_locations, ["Habitatges iniciats", "Habitatges acabats"], 2008, annual=True)
+                for _metric in ["Habitatges iniciats", "Habitatges acabats"]:
+                    comparativa_render_metric(_frames_pa_prod, _frames_pa_prod_y, _metric, "Nombre d'habitatges", _metric, pa_suffix, _comp_pa_year_actual, _comp_pa_year_previous)
+
+                st.markdown('<div id="comp-pa-prod-hpo" class="viab-anchor"></div>', unsafe_allow_html=True)
+                st.subheader("COMPARATIVA — PRODUCCIÓ: QUALIFICACIONS HPO")
+                st.caption("Les qualificacions d'HPO només es publiquen amb periodicitat anual.")
+                _frames_pa_hpo_y = comparativa_build_frames(["calprovgene_", "caldefgene_"], comp_pa_locations, ["Qualificacions provisionals d'HPO", "Qualificacions definitives d'HPO"], 2008, annual=True)
+                for _metric in ["Qualificacions provisionals d'HPO", "Qualificacions definitives d'HPO"]:
+                    comparativa_render_metric(None, _frames_pa_hpo_y, _metric, "Nombre de qualificacions", _metric, pa_suffix, _comp_pa_year_actual, _comp_pa_year_previous, trimestral=False)
+
+                st.markdown('<div id="comp-pa-compravendes" class="viab-anchor"></div>', unsafe_allow_html=True)
+                st.subheader("COMPARATIVA — COMPRAVENDES")
+                _comp_pa_metrics_venda = ["Compravendes d'habitatge total", "Compravendes d'habitatge de segona mà", "Compravendes d'habitatge nou"]
+                _frames_pa_venda = comparativa_build_frames(["trvivt_", "trvivs_", "trvivn_"], comp_pa_locations, _comp_pa_metrics_venda, 2014)
+                _frames_pa_venda_y = comparativa_build_frames(["trvivt_", "trvivs_", "trvivn_"], comp_pa_locations, _comp_pa_metrics_venda, 2014, annual=True)
+                for _metric in _comp_pa_metrics_venda:
+                    comparativa_render_metric(_frames_pa_venda, _frames_pa_venda_y, _metric, "Nombre de compravendes", _metric, pa_suffix, _comp_pa_year_actual, _comp_pa_year_previous)
+                _t_any_total = comparativa_metric_table(_frames_pa_venda_y, "Compravendes d'habitatge total")
+                _t_any_segona = comparativa_metric_table(_frames_pa_venda_y, "Compravendes d'habitatge de segona mà")
+                _t_any_nova = comparativa_metric_table(_frames_pa_venda_y, "Compravendes d'habitatge nou")
+                _any_ref = str(selected_year_n) if str(selected_year_n) in _t_any_total.index else _t_any_total.index[-1]
+                _pct_segona = (_t_any_segona.loc[_any_ref] / _t_any_total.loc[_any_ref] * 100).round(1)
+                _pct_nova = (_t_any_nova.loc[_any_ref] / _t_any_total.loc[_any_ref] * 100).round(1)
+                st.markdown("**Proporció segona mà vs obra nova**")
+                st_plotly_chart(bar_plotly_comparativa_100(_pct_segona, _pct_nova, "Segona mà", "Obra nova", f"Proporció de compravendes per {pa_label_singular}", _any_ref), use_container_width=True, responsive=True)
+
+                st.markdown('<div id="comp-pa-preus" class="viab-anchor"></div>', unsafe_allow_html=True)
+                st.subheader("COMPARATIVA — PREUS PER M² CONSTRUÏT")
+                _comp_pa_metrics_preus = ["Preu d'habitatge total", "Preu d'habitatge de segona mà", "Preu d'habitatge nou"]
+                _frames_pa_preus = comparativa_build_frames(["prvivt_", "prvivs_", "prvivn_"], comp_pa_locations, _comp_pa_metrics_preus, 2014)
+                _frames_pa_preus_y = comparativa_build_frames(["prvivt_", "prvivs_", "prvivn_"], comp_pa_locations, _comp_pa_metrics_preus, 2014, annual=True)
+                for _metric in _comp_pa_metrics_preus:
+                    comparativa_render_metric(_frames_pa_preus, _frames_pa_preus_y, _metric, "€/m²", _metric, pa_suffix, _comp_pa_year_actual, _comp_pa_year_previous)
+
+                st.markdown('<div id="comp-pa-superficie" class="viab-anchor"></div>', unsafe_allow_html=True)
+                st.subheader("COMPARATIVA — SUPERFÍCIE MITJANA")
+                _comp_pa_metrics_sup = ["Superfície mitjana total", "Superfície mitjana d'habitatge de segona mà", "Superfície mitjana d'habitatge nou"]
+                _frames_pa_sup = comparativa_build_frames(["supert_", "supers_", "supern_"], comp_pa_locations, _comp_pa_metrics_sup, 2014)
+                _frames_pa_sup_y = comparativa_build_frames(["supert_", "supers_", "supern_"], comp_pa_locations, _comp_pa_metrics_sup, 2014, annual=True)
+                for _metric in _comp_pa_metrics_sup:
+                    comparativa_render_metric(_frames_pa_sup, _frames_pa_sup_y, _metric, "m²", _metric, pa_suffix, _comp_pa_year_actual, _comp_pa_year_previous)
         if selected_option=="Àmbits territorials":
             if selected_index=="Producció":
                 min_year=2008
@@ -4521,14 +4590,14 @@ if selected == "Províncies i àmbits":
 if selected=="Comarques":
     left, center, right= st.columns((1,1,1))
     with left:
-        selected_type = st.radio("**Mercat de venda o lloguer**", ("Venda", "Lloguer"), horizontal=True, key=501)
+        selected_type = st.radio("**Mercat de venda o lloguer**", ("Venda", "Lloguer"), horizontal=True, key="comarques_tipus_mercat")
     with center:
-        selected_com = st.selectbox("**Selecciona una comarca:**", sorted(maestro_mun["Comarca"].unique().tolist()), index= sorted(maestro_mun["Comarca"].unique().tolist()).index("Barcelonès"), key=502)
+        selected_com = st.selectbox("**Selecciona una comarca:**", sorted(maestro_mun["Comarca"].unique().tolist()), index= sorted(maestro_mun["Comarca"].unique().tolist()).index("Barcelonès"), key="comarques_selector_comarca")
         if selected_type=="Venda":
-            selected_index = st.selectbox("**Selecciona un indicador:**", ["Producció", "Compravendes", "Preus", "Superfície"], key=503)
+            selected_index = st.selectbox("**Selecciona un indicador:**", ["Producció", "Compravendes", "Preus", "Superfície"], key="comarques_indicador")
     with right:
         available_years, index_year = year_selector_options(f"iniviv_{selected_com}", df_quarterly=DT_terr, df_annual=DT_terr_y)
-        selected_year_n = st.selectbox("**Selecciona un any:**", available_years, available_years.index(index_year), key=504)
+        selected_year_n = st.selectbox("**Selecciona un any:**", available_years, available_years.index(index_year), key="comarques_any")
         st.markdown('<div class="comparativa-toggle-anchor"></div>', unsafe_allow_html=True)
         comarca_comparativa_on = st.toggle("📊 Comparativa entre comarques", key="comarca_comparativa_toggle")
 
@@ -4572,37 +4641,19 @@ if selected=="Comarques":
             _comp_com_year_actual = LAST_CLOSED_YEAR
             _comp_com_year_previous = LAST_CLOSED_YEAR - 1
 
-            def _comp_com_render_metric(frames_trim, frames_y, metric, unit_label, filename_prefix, trimestral=True):
-                t_any = comparativa_metric_table(frames_y, metric)
-                st.markdown(f"**{metric}**")
-                if trimestral:
-                    t_trim = comparativa_metric_table(frames_trim, metric)
-                    st.markdown(comparativa_style_table(comparativa_display_trim(t_trim).T).to_html(), unsafe_allow_html=True)
-                    st.markdown(filedownload(t_trim.T, f"Comparativa_{filename_prefix}_comarques.xlsx"), unsafe_allow_html=True)
-                st.markdown(comparativa_style_table(t_any.T).to_html(), unsafe_allow_html=True)
-                st.markdown(filedownload(t_any.T, f"Comparativa_{filename_prefix}_comarques_anual.xlsx"), unsafe_allow_html=True)
-                if trimestral:
-                    left_col, right_col = st.columns((1, 1))
-                    with left_col:
-                        st_plotly_chart(line_plotly(t_trim, t_trim.columns.tolist(), f"Evolució trimestral — {metric}", unit_label), use_container_width=True, responsive=True)
-                    with right_col:
-                        st_plotly_chart(bar_plotly_comparativa_anys(t_any, f"Comparativa anual — {metric}", unit_label, _comp_com_year_actual, _comp_com_year_previous), use_container_width=True, responsive=True)
-                else:
-                    st_plotly_chart(bar_plotly_comparativa_anys(t_any, f"Comparativa anual — {metric}", unit_label, _comp_com_year_actual, _comp_com_year_previous), use_container_width=True, responsive=True)
-
             st.markdown('<div id="comp-com-prod-iniacab" class="viab-anchor"></div>', unsafe_allow_html=True)
             st.subheader("COMPARATIVA — PRODUCCIÓ: INICIATS I ACABATS")
             _frames_com_prod = comparativa_build_frames(["iniviv_", "finviv_"], comp_com_locations, ["Habitatges iniciats", "Habitatges acabats"], 2008)
             _frames_com_prod_y = comparativa_build_frames(["iniviv_", "finviv_"], comp_com_locations, ["Habitatges iniciats", "Habitatges acabats"], 2008, annual=True)
             for _metric in ["Habitatges iniciats", "Habitatges acabats"]:
-                _comp_com_render_metric(_frames_com_prod, _frames_com_prod_y, _metric, "Nombre d'habitatges", _metric)
+                comparativa_render_metric(_frames_com_prod, _frames_com_prod_y, _metric, "Nombre d'habitatges", _metric, "comarques", _comp_com_year_actual, _comp_com_year_previous)
 
             st.markdown('<div id="comp-com-prod-hpo" class="viab-anchor"></div>', unsafe_allow_html=True)
             st.subheader("COMPARATIVA — PRODUCCIÓ: QUALIFICACIONS HPO")
             st.caption("Les qualificacions d'HPO només es publiquen amb periodicitat anual.")
             _frames_com_hpo_y = comparativa_build_frames(["calprovgene_", "caldefgene_"], comp_com_locations, ["Qualificacions provisionals d'HPO", "Qualificacions definitives d'HPO"], 2008, annual=True)
             for _metric in ["Qualificacions provisionals d'HPO", "Qualificacions definitives d'HPO"]:
-                _comp_com_render_metric(None, _frames_com_hpo_y, _metric, "Nombre de qualificacions", _metric, trimestral=False)
+                comparativa_render_metric(None, _frames_com_hpo_y, _metric, "Nombre de qualificacions", _metric, "comarques", _comp_com_year_actual, _comp_com_year_previous, trimestral=False)
 
             st.markdown('<div id="comp-com-compravendes" class="viab-anchor"></div>', unsafe_allow_html=True)
             st.subheader("COMPARATIVA — COMPRAVENDES")
@@ -4610,7 +4661,7 @@ if selected=="Comarques":
             _frames_com_venda = comparativa_build_frames(["trvivt_", "trvivs_", "trvivn_"], comp_com_locations, _comp_com_metrics_venda, 2014)
             _frames_com_venda_y = comparativa_build_frames(["trvivt_", "trvivs_", "trvivn_"], comp_com_locations, _comp_com_metrics_venda, 2014, annual=True)
             for _metric in _comp_com_metrics_venda:
-                _comp_com_render_metric(_frames_com_venda, _frames_com_venda_y, _metric, "Nombre de compravendes", _metric)
+                comparativa_render_metric(_frames_com_venda, _frames_com_venda_y, _metric, "Nombre de compravendes", _metric, "comarques", _comp_com_year_actual, _comp_com_year_previous)
             _t_any_total = comparativa_metric_table(_frames_com_venda_y, "Compravendes d'habitatge total")
             _t_any_segona = comparativa_metric_table(_frames_com_venda_y, "Compravendes d'habitatge de segona mà")
             _t_any_nova = comparativa_metric_table(_frames_com_venda_y, "Compravendes d'habitatge nou")
@@ -4626,7 +4677,7 @@ if selected=="Comarques":
             _frames_com_preus = comparativa_build_frames(["prvivt_", "prvivs_", "prvivn_"], comp_com_locations, _comp_com_metrics_preus, 2014)
             _frames_com_preus_y = comparativa_build_frames(["prvivt_", "prvivs_", "prvivn_"], comp_com_locations, _comp_com_metrics_preus, 2014, annual=True)
             for _metric in _comp_com_metrics_preus:
-                _comp_com_render_metric(_frames_com_preus, _frames_com_preus_y, _metric, "€/m²", _metric)
+                comparativa_render_metric(_frames_com_preus, _frames_com_preus_y, _metric, "€/m²", _metric, "comarques", _comp_com_year_actual, _comp_com_year_previous)
 
             st.markdown('<div id="comp-com-superficie" class="viab-anchor"></div>', unsafe_allow_html=True)
             st.subheader("COMPARATIVA — SUPERFÍCIE MITJANA")
@@ -4634,7 +4685,7 @@ if selected=="Comarques":
             _frames_com_sup = comparativa_build_frames(["supert_", "supers_", "supern_"], comp_com_locations, _comp_com_metrics_sup, 2014)
             _frames_com_sup_y = comparativa_build_frames(["supert_", "supers_", "supern_"], comp_com_locations, _comp_com_metrics_sup, 2014, annual=True)
             for _metric in _comp_com_metrics_sup:
-                _comp_com_render_metric(_frames_com_sup, _frames_com_sup_y, _metric, "m²", _metric)
+                comparativa_render_metric(_frames_com_sup, _frames_com_sup_y, _metric, "m²", _metric, "comarques", _comp_com_year_actual, _comp_com_year_previous)
 
     if selected_type=="Venda":
         if selected_index=="Producció":
@@ -4852,15 +4903,15 @@ if selected=="Comarques":
 if selected=="Municipis":
     left, center, right= st.columns((1,1,1))
     with left:
-        selected_type = st.radio("**Selecciona un tipus d'indicador**", ("Venda", "Lloguer", "Altres indicadors"), key=601, horizontal=False)
+        selected_type = st.radio("**Selecciona un tipus d'indicador**", ("Venda", "Lloguer", "Altres indicadors"), key="municipis_tipus_indicador", horizontal=False)
     with center:
-        selected_mun = st.selectbox("**Selecciona un municipi:**", maestro_mun[maestro_mun["ADD"]=="SI"]["Municipi"].unique(), index= maestro_mun[maestro_mun["ADD"]=="SI"]["Municipi"].tolist().index("Barcelona"), key=602)
+        selected_mun = st.selectbox("**Selecciona un municipi:**", maestro_mun[maestro_mun["ADD"]=="SI"]["Municipi"].unique(), index= maestro_mun[maestro_mun["ADD"]=="SI"]["Municipi"].tolist().index("Barcelona"), key="municipis_selector_municipi")
         if selected_type=="Venda":
-            selected_index = st.selectbox("**Selecciona un indicador:**", ["Producció", "Compravendes", "Preus", "Superfície"], key=603)
+            selected_index = st.selectbox("**Selecciona un indicador:**", ["Producció", "Compravendes", "Preus", "Superfície"], key="municipis_indicador")
     with right:
         if (selected_type=="Venda") or (selected_type=="Lloguer"):
             available_years, index_year = year_selector_options(f"iniviv_{selected_mun}", df_quarterly=DT_mun, df_annual=DT_mun_y)
-            selected_year_n = st.selectbox("**Selecciona un any:**", available_years, available_years.index(index_year), key=604)
+            selected_year_n = st.selectbox("**Selecciona un any:**", available_years, available_years.index(index_year), key="municipis_any")
         if selected_type=="Venda":
             st.markdown('<div class="comparativa-toggle-anchor"></div>', unsafe_allow_html=True)
             mun_comparativa_on = st.toggle("📊 Comparativa entre municipis", key="mun_comparativa_toggle")
@@ -4911,37 +4962,19 @@ if selected=="Municipis":
                 _comp_mun_year_actual = LAST_CLOSED_YEAR
                 _comp_mun_year_previous = LAST_CLOSED_YEAR - 1
 
-                def _comp_mun_render_metric(frames_trim, frames_y, metric, unit_label, filename_prefix, trimestral=True):
-                    t_any = comparativa_metric_table(frames_y, metric)
-                    st.markdown(f"**{metric}**")
-                    if trimestral:
-                        t_trim = comparativa_metric_table(frames_trim, metric)
-                        st.markdown(comparativa_style_table(comparativa_display_trim(t_trim).T).to_html(), unsafe_allow_html=True)
-                        st.markdown(filedownload(t_trim.T, f"Comparativa_{filename_prefix}_municipis.xlsx"), unsafe_allow_html=True)
-                    st.markdown(comparativa_style_table(t_any.T).to_html(), unsafe_allow_html=True)
-                    st.markdown(filedownload(t_any.T, f"Comparativa_{filename_prefix}_municipis_anual.xlsx"), unsafe_allow_html=True)
-                    if trimestral:
-                        left_col, right_col = st.columns((1, 1))
-                        with left_col:
-                            st_plotly_chart(line_plotly(t_trim, t_trim.columns.tolist(), f"Evolució trimestral — {metric}", unit_label), use_container_width=True, responsive=True)
-                        with right_col:
-                            st_plotly_chart(bar_plotly_comparativa_anys(t_any, f"Comparativa anual — {metric}", unit_label, _comp_mun_year_actual, _comp_mun_year_previous), use_container_width=True, responsive=True)
-                    else:
-                        st_plotly_chart(bar_plotly_comparativa_anys(t_any, f"Comparativa anual — {metric}", unit_label, _comp_mun_year_actual, _comp_mun_year_previous), use_container_width=True, responsive=True)
-
                 st.markdown('<div id="comp-mun-prod-iniacab" class="viab-anchor"></div>', unsafe_allow_html=True)
                 st.subheader("COMPARATIVA — PRODUCCIÓ: INICIATS I ACABATS")
                 _frames_mun_prod = comparativa_build_frames(["iniviv_", "finviv_"], comp_mun_locations, ["Habitatges iniciats", "Habitatges acabats"], 2008, df_quarterly=DT_mun, df_annual=DT_mun_y)
                 _frames_mun_prod_y = comparativa_build_frames(["iniviv_", "finviv_"], comp_mun_locations, ["Habitatges iniciats", "Habitatges acabats"], 2008, annual=True, df_quarterly=DT_mun, df_annual=DT_mun_y)
                 for _metric in ["Habitatges iniciats", "Habitatges acabats"]:
-                    _comp_mun_render_metric(_frames_mun_prod, _frames_mun_prod_y, _metric, "Nombre d'habitatges", _metric)
+                    comparativa_render_metric(_frames_mun_prod, _frames_mun_prod_y, _metric, "Nombre d'habitatges", _metric, "municipis", _comp_mun_year_actual, _comp_mun_year_previous)
 
                 st.markdown('<div id="comp-mun-prod-hpo" class="viab-anchor"></div>', unsafe_allow_html=True)
                 st.subheader("COMPARATIVA — PRODUCCIÓ: QUALIFICACIONS HPO")
                 st.caption("Les qualificacions d'HPO només es publiquen amb periodicitat anual.")
                 _frames_mun_hpo_y = comparativa_build_frames(["calprovgene_", "caldefgene_"], comp_mun_locations, ["Qualificacions provisionals d'HPO", "Qualificacions definitives d'HPO"], 2008, annual=True, df_quarterly=DT_mun, df_annual=DT_mun_y)
                 for _metric in ["Qualificacions provisionals d'HPO", "Qualificacions definitives d'HPO"]:
-                    _comp_mun_render_metric(None, _frames_mun_hpo_y, _metric, "Nombre de qualificacions", _metric, trimestral=False)
+                    comparativa_render_metric(None, _frames_mun_hpo_y, _metric, "Nombre de qualificacions", _metric, "municipis", _comp_mun_year_actual, _comp_mun_year_previous, trimestral=False)
 
                 st.markdown('<div id="comp-mun-compravendes" class="viab-anchor"></div>', unsafe_allow_html=True)
                 st.subheader("COMPARATIVA — COMPRAVENDES")
@@ -4949,7 +4982,7 @@ if selected=="Municipis":
                 _frames_mun_venda = comparativa_build_frames(["trvivt_", "trvivs_", "trvivn_"], comp_mun_locations, _comp_mun_metrics_venda, 2014, df_quarterly=DT_mun, df_annual=DT_mun_y)
                 _frames_mun_venda_y = comparativa_build_frames(["trvivt_", "trvivs_", "trvivn_"], comp_mun_locations, _comp_mun_metrics_venda, 2014, annual=True, df_quarterly=DT_mun, df_annual=DT_mun_y)
                 for _metric in _comp_mun_metrics_venda:
-                    _comp_mun_render_metric(_frames_mun_venda, _frames_mun_venda_y, _metric, "Nombre de compravendes", _metric)
+                    comparativa_render_metric(_frames_mun_venda, _frames_mun_venda_y, _metric, "Nombre de compravendes", _metric, "municipis", _comp_mun_year_actual, _comp_mun_year_previous)
                 _t_any_total = comparativa_metric_table(_frames_mun_venda_y, "Compravendes d'habitatge total")
                 _t_any_segona = comparativa_metric_table(_frames_mun_venda_y, "Compravendes d'habitatge de segona mà")
                 _t_any_nova = comparativa_metric_table(_frames_mun_venda_y, "Compravendes d'habitatge nou")
@@ -4965,7 +4998,7 @@ if selected=="Municipis":
                 _frames_mun_preus = comparativa_build_frames(["prvivt_", "prvivs_", "prvivn_"], comp_mun_locations, _comp_mun_metrics_preus, 2014, df_quarterly=DT_mun, df_annual=DT_mun_y)
                 _frames_mun_preus_y = comparativa_build_frames(["prvivt_", "prvivs_", "prvivn_"], comp_mun_locations, _comp_mun_metrics_preus, 2014, annual=True, df_quarterly=DT_mun, df_annual=DT_mun_y)
                 for _metric in _comp_mun_metrics_preus:
-                    _comp_mun_render_metric(_frames_mun_preus, _frames_mun_preus_y, _metric, "€/m²", _metric)
+                    comparativa_render_metric(_frames_mun_preus, _frames_mun_preus_y, _metric, "€/m²", _metric, "municipis", _comp_mun_year_actual, _comp_mun_year_previous)
 
                 st.markdown('<div id="comp-mun-superficie" class="viab-anchor"></div>', unsafe_allow_html=True)
                 st.subheader("COMPARATIVA — SUPERFÍCIE MITJANA")
@@ -4973,7 +5006,7 @@ if selected=="Municipis":
                 _frames_mun_sup = comparativa_build_frames(["supert_", "supers_", "supern_"], comp_mun_locations, _comp_mun_metrics_sup, 2014, df_quarterly=DT_mun, df_annual=DT_mun_y)
                 _frames_mun_sup_y = comparativa_build_frames(["supert_", "supers_", "supern_"], comp_mun_locations, _comp_mun_metrics_sup, 2014, annual=True, df_quarterly=DT_mun, df_annual=DT_mun_y)
                 for _metric in _comp_mun_metrics_sup:
-                    _comp_mun_render_metric(_frames_mun_sup, _frames_mun_sup_y, _metric, "m²", _metric)
+                    comparativa_render_metric(_frames_mun_sup, _frames_mun_sup_y, _metric, "m²", _metric, "municipis", _comp_mun_year_actual, _comp_mun_year_previous)
 
         if selected_index=="Producció":
             min_year=2008
@@ -5394,15 +5427,15 @@ if selected=="Municipis":
 if selected=="Districtes de Barcelona":
     left, center, right= st.columns((1,1,1))
     with left:
-        selected_type = st.radio("**Selecciona un tipus d'indicador**", ("Venda", "Lloguer", "Demografia i parc d'habitatge"), key=701, horizontal=False)
+        selected_type = st.radio("**Selecciona un tipus d'indicador**", ("Venda", "Lloguer", "Demografia i parc d'habitatge"), key="districtes_tipus_indicador", horizontal=False)
     with center:
-        selected_dis = st.selectbox("**Selecciona un districte de Barcelona:**", maestro_dis["Districte"].unique(), key=702)
+        selected_dis = st.selectbox("**Selecciona un districte de Barcelona:**", maestro_dis["Districte"].unique(), key="districtes_selector_districte")
         if selected_type=="Venda":
-            selected_index = st.selectbox("**Selecciona un indicador:**", ["Producció", "Compravendes", "Preus", "Superfície"], key=703)
+            selected_index = st.selectbox("**Selecciona un indicador:**", ["Producció", "Compravendes", "Preus", "Superfície"], key="districtes_indicador")
     with right:
         if (selected_type=="Venda") or (selected_type=="Lloguer"):
             available_years, index_year = year_selector_options(f"iniviv_{selected_dis}", df_quarterly=DT_dis, df_annual=DT_dis_y)
-            selected_year_n = st.selectbox("**Selecciona un any:**", available_years, available_years.index(index_year), key=704)
+            selected_year_n = st.selectbox("**Selecciona un any:**", available_years, available_years.index(index_year), key="districtes_any")
         if selected_type=="Venda":
             st.markdown('<div class="comparativa-toggle-anchor"></div>', unsafe_allow_html=True)
             dis_comparativa_on = st.toggle("📊 Comparativa entre districtes", key="dis_comparativa_toggle")
@@ -5435,31 +5468,13 @@ if selected=="Districtes de Barcelona":
                 _comp_dis_year_actual = LAST_CLOSED_YEAR
                 _comp_dis_year_previous = LAST_CLOSED_YEAR - 1
 
-                def _comp_dis_render_metric(frames_trim, frames_y, metric, unit_label, filename_prefix, trimestral=True):
-                    t_any = comparativa_metric_table(frames_y, metric)
-                    st.markdown(f"**{metric}**")
-                    if trimestral:
-                        t_trim = comparativa_metric_table(frames_trim, metric)
-                        st.markdown(comparativa_style_table(comparativa_display_trim(t_trim).T).to_html(), unsafe_allow_html=True)
-                        st.markdown(filedownload(t_trim.T, f"Comparativa_{filename_prefix}_districtes.xlsx"), unsafe_allow_html=True)
-                    st.markdown(comparativa_style_table(t_any.T).to_html(), unsafe_allow_html=True)
-                    st.markdown(filedownload(t_any.T, f"Comparativa_{filename_prefix}_districtes_anual.xlsx"), unsafe_allow_html=True)
-                    if trimestral:
-                        left_col, right_col = st.columns((1, 1))
-                        with left_col:
-                            st_plotly_chart(line_plotly(t_trim, t_trim.columns.tolist(), f"Evolució trimestral — {metric}", unit_label), use_container_width=True, responsive=True)
-                        with right_col:
-                            st_plotly_chart(bar_plotly_comparativa_anys(t_any, f"Comparativa anual — {metric}", unit_label, _comp_dis_year_actual, _comp_dis_year_previous), use_container_width=True, responsive=True)
-                    else:
-                        st_plotly_chart(bar_plotly_comparativa_anys(t_any, f"Comparativa anual — {metric}", unit_label, _comp_dis_year_actual, _comp_dis_year_previous), use_container_width=True, responsive=True)
-
                 st.markdown('<div id="comp-dis-produccio" class="viab-anchor"></div>', unsafe_allow_html=True)
                 st.subheader("COMPARATIVA — PRODUCCIÓ: INICIATS I ACABATS")
                 st.caption("Els districtes de Barcelona no tenen desglossament de qualificacions d'HPO.")
                 _frames_dis_prod = comparativa_build_frames(["iniviv_", "finviv_"], comp_dis_locations, ["Habitatges iniciats", "Habitatges acabats"], 2011, df_quarterly=DT_dis, df_annual=DT_dis_y)
                 _frames_dis_prod_y = comparativa_build_frames(["iniviv_", "finviv_"], comp_dis_locations, ["Habitatges iniciats", "Habitatges acabats"], 2011, annual=True, df_quarterly=DT_dis, df_annual=DT_dis_y)
                 for _metric in ["Habitatges iniciats", "Habitatges acabats"]:
-                    _comp_dis_render_metric(_frames_dis_prod, _frames_dis_prod_y, _metric, "Nombre d'habitatges", _metric)
+                    comparativa_render_metric(_frames_dis_prod, _frames_dis_prod_y, _metric, "Nombre d'habitatges", _metric, "districtes", _comp_dis_year_actual, _comp_dis_year_previous)
 
                 st.markdown('<div id="comp-dis-compravendes" class="viab-anchor"></div>', unsafe_allow_html=True)
                 st.subheader("COMPARATIVA — COMPRAVENDES")
@@ -5467,7 +5482,7 @@ if selected=="Districtes de Barcelona":
                 _frames_dis_venda = comparativa_build_frames(["trvivt_", "trvivs_", "trvivn_"], comp_dis_locations, _comp_dis_metrics_venda, 2014, df_quarterly=DT_dis, df_annual=DT_dis_y)
                 _frames_dis_venda_y = comparativa_build_frames(["trvivt_", "trvivs_", "trvivn_"], comp_dis_locations, _comp_dis_metrics_venda, 2014, annual=True, df_quarterly=DT_dis, df_annual=DT_dis_y)
                 for _metric in _comp_dis_metrics_venda:
-                    _comp_dis_render_metric(_frames_dis_venda, _frames_dis_venda_y, _metric, "Nombre de compravendes", _metric)
+                    comparativa_render_metric(_frames_dis_venda, _frames_dis_venda_y, _metric, "Nombre de compravendes", _metric, "districtes", _comp_dis_year_actual, _comp_dis_year_previous)
                 _t_any_total = comparativa_metric_table(_frames_dis_venda_y, "Compravendes d'habitatge total")
                 _t_any_segona = comparativa_metric_table(_frames_dis_venda_y, "Compravendes d'habitatge de segona mà")
                 _t_any_nova = comparativa_metric_table(_frames_dis_venda_y, "Compravendes d'habitatge nou")
@@ -5483,7 +5498,7 @@ if selected=="Districtes de Barcelona":
                 _frames_dis_preus = comparativa_build_frames(["prvivt_", "prvivs_", "prvivn_"], comp_dis_locations, _comp_dis_metrics_preus, 2014, df_quarterly=DT_dis, df_annual=DT_dis_y)
                 _frames_dis_preus_y = comparativa_build_frames(["prvivt_", "prvivs_", "prvivn_"], comp_dis_locations, _comp_dis_metrics_preus, 2014, annual=True, df_quarterly=DT_dis, df_annual=DT_dis_y)
                 for _metric in _comp_dis_metrics_preus:
-                    _comp_dis_render_metric(_frames_dis_preus, _frames_dis_preus_y, _metric, "€/m²", _metric)
+                    comparativa_render_metric(_frames_dis_preus, _frames_dis_preus_y, _metric, "€/m²", _metric, "districtes", _comp_dis_year_actual, _comp_dis_year_previous)
 
                 st.markdown('<div id="comp-dis-superficie" class="viab-anchor"></div>', unsafe_allow_html=True)
                 st.subheader("COMPARATIVA — SUPERFÍCIE MITJANA")
@@ -5491,7 +5506,7 @@ if selected=="Districtes de Barcelona":
                 _frames_dis_sup = comparativa_build_frames(["supert_", "supers_", "supern_"], comp_dis_locations, _comp_dis_metrics_sup, 2014, df_quarterly=DT_dis, df_annual=DT_dis_y)
                 _frames_dis_sup_y = comparativa_build_frames(["supert_", "supers_", "supern_"], comp_dis_locations, _comp_dis_metrics_sup, 2014, annual=True, df_quarterly=DT_dis, df_annual=DT_dis_y)
                 for _metric in _comp_dis_metrics_sup:
-                    _comp_dis_render_metric(_frames_dis_sup, _frames_dis_sup_y, _metric, "m²", _metric)
+                    comparativa_render_metric(_frames_dis_sup, _frames_dis_sup_y, _metric, "m²", _metric, "districtes", _comp_dis_year_actual, _comp_dis_year_previous)
 
         if selected_index=="Producció":
             min_year=2011
@@ -5762,7 +5777,7 @@ if selected == "Informe de Mercat i Sectorial":
     st.subheader("INFORME DE MERCAT PER MUNICIPI")
     left, right = st.columns((1, 1))
     with left:
-        selected_mun = st.selectbox("**Selecciona un municipi:**", maestro_mun[maestro_mun["ADD"]=="SI"]["Municipi"].unique(), index= maestro_mun[maestro_mun["ADD"]=="SI"]["Municipi"].tolist().index("Barcelona"), key=602)
+        selected_mun = st.selectbox("**Selecciona un municipi:**", maestro_mun[maestro_mun["ADD"]=="SI"]["Municipi"].unique(), index= maestro_mun[maestro_mun["ADD"]=="SI"]["Municipi"].tolist().index("Barcelona"), key="informe_mercat_selector_municipi")
     with right:
         st.write("**Descarrega l'informe complet del municipi seleccionat:**")
         if st.button("📄 Descarregar informe PDF"):
@@ -6836,44 +6851,6 @@ def oferta_grafic_principals_tipologies(df_hab):
         taula["Total dormitoris"].fillna(0).astype(int).astype(str) + " dormitoris i " + taula["Banys i lavabos"].fillna(0).astype(int).astype(str) + " banys",
     )
     fig = px.bar(taula.head(4), x="Proporcions", y="Tipologia", orientation="h", title="Principals tipologies dels habitatges en oferta (%)")
-    fig.update_traces(marker=dict(color=OFERTA_COLOR_BARRES))
-    return oferta_preparar_fig(fig)
-
-
-@st.cache_data(show_spinner=False)
-def oferta_grafic_obra_nova(df_hab):
-    taula = df_hab[["TIPH"]].value_counts().reset_index()
-    taula.columns = ["Tipus", "Habitatges en oferta"]
-    fig = go.Figure()
-    fig.add_trace(go.Pie(labels=taula["Tipus"], values=taula["Habitatges en oferta"], hole=0.5, showlegend=True, marker=dict(colors=[OFERTA_COLOR_BARRES, OFERTA_COLOR_ACCENT]), textposition="outside", textinfo="percent+label"))
-    fig.update_layout(title="Habitatges en oferta d'obra nova a Catalunya (%)")
-    return oferta_preparar_fig(fig)
-
-
-@st.cache_data(show_spinner=False)
-def oferta_grafic_qualitats(df_hab):
-    disponibles = [c for c in OFERTA_VARIABLES_QUALITATS if c in df_hab.columns]
-    if not disponibles or df_hab.empty:
-        return oferta_fig_no_disponible("Qualitats", "No hi ha variables de qualitats disponibles.")
-    taula = df_hab[disponibles].sum(axis=0, numeric_only=True)
-    taula = pd.DataFrame({"Qualitats": taula.index, "Total": taula.values})
-    taula["Total"] = taula["Total"] * 100 / len(df_hab)
-    taula = taula.sort_values("Total", ascending=True)
-    fig = px.bar(taula, x="Total", y="Qualitats", orientation="h", labels={"Total": "Proporcions sobre el total d'habitatges (%)"})
-    fig.update_traces(marker=dict(color=OFERTA_COLOR_BARRES))
-    return oferta_preparar_fig(fig)
-
-
-@st.cache_data(show_spinner=False)
-def oferta_grafic_equipaments(df_hab):
-    disponibles = [c for c in OFERTA_VARIABLES_EQUIPAMENTS if c in df_hab.columns]
-    if not disponibles or df_hab.empty:
-        return oferta_fig_no_disponible("Equipaments", "No hi ha variables d'equipaments disponibles.")
-    taula = df_hab[disponibles].sum(axis=0, numeric_only=True)
-    taula = pd.DataFrame({"Equipaments": taula.index, "Total": taula.values})
-    taula["Total"] = taula["Total"] * 100 / len(df_hab)
-    taula = taula.sort_values("Total", ascending=True)
-    fig = px.bar(taula, x="Total", y="Equipaments", orientation="h", labels={"Total": "Proporcions sobre el total d'habitatges (%)"})
     fig.update_traces(marker=dict(color=OFERTA_COLOR_BARRES))
     return oferta_preparar_fig(fig)
 
