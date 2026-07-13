@@ -7381,7 +7381,7 @@ def oferta_folium_map(tmp, title, h=760):
 
 @st.cache_data(show_spinner=False)
 def oferta_preparar_punts_habitatges(dades_totals, any_estudi, tipologia):
-    cols = ["latitude", "longitude", "Municipi", "Preu mitjà", "Preu m2 útil", "Superfície útil"]
+    cols = ["latitude", "longitude", "Municipi", "Preu mitjà", "Preu m2 útil", "Superfície útil", "Total dormitoris", "Banys i lavabos"]
     df = dades_totals[
         (dades_totals["Any"] == int(any_estudi))
         & (dades_totals["TIPOG"] == tipologia)
@@ -7391,13 +7391,68 @@ def oferta_preparar_punts_habitatges(dades_totals, any_estudi, tipologia):
     return df.to_dict("records")
 
 
-def oferta_popup_habitatge(row):
+def oferta_agrupar_punts_habitatges(punts):
+    """Agrupa els habitatges que comparteixen coordenades (mateix edifici/promoció,
+    arrodonit a 5 decimals ~1m) en un únic punt de mapa: evita que el clúster mostri
+    un número sense poder-hi accedir mai (coordenades idèntiques no es poden separar
+    fent zoom, per molt que s'hi apropi). Cada grup porta la llista completa
+    d'habitatges d'aquella ubicació per construir-ne un popup agregat."""
+    grups = {}
+    for p in punts:
+        key = (round(p["latitude"], 5), round(p["longitude"], 5))
+        grups.setdefault(key, []).append(p)
+    resultat = []
+    for (lat, lon), units in grups.items():
+        preus = [u["Preu m2 útil"] for u in units if pd.notna(u.get("Preu m2 útil"))]
+        resultat.append({
+            "latitude": lat, "longitude": lon,
+            "Municipi": units[0].get("Municipi", ""),
+            "n": len(units),
+            "preu_min": min(preus) if preus else None,
+            "preu_max": max(preus) if preus else None,
+            "units": units,
+        })
+    return resultat
+
+
+def oferta_popup_grup_habitatges(grup):
+    """Popup d'un punt del mapa: si només hi ha 1 habitatge, la fitxa d'abans; si n'hi
+    ha més d'un (edifici/promoció amb diverses unitats a la mateixa coordenada), una
+    taula amb totes (amb scroll intern si n'hi ha moltes) en comptes d'intentar
+    separar-les visualment al mapa."""
+    n = grup["n"]
+    titol = f"{n} habitatges" if n > 1 else "1 habitatge"
+    if n == 1:
+        u = grup["units"][0]
+        return f"""
+        <div style='font-family: Arial, sans-serif; min-width: 190px;'>
+          <b>{grup['Municipi']}</b><br>
+          Preu mitjà: {oferta_format_num(u.get('Preu mitjà'), 0)} €<br>
+          Preu m² útil: {oferta_format_num(u.get('Preu m2 útil'), 0)} €/m²<br>
+          Superfície útil: {oferta_format_num(u.get('Superfície útil'), 1)} m²
+        </div>
+        """
+    files = "".join(
+        f"<tr><td>{oferta_format_num(u.get('Total dormitoris'), 0)}</td>"
+        f"<td>{oferta_format_num(u.get('Banys i lavabos'), 0)}</td>"
+        f"<td>{oferta_format_num(u.get('Superfície útil'), 0)} m²</td>"
+        f"<td>{oferta_format_num(u.get('Preu mitjà'), 0)} €</td>"
+        f"<td>{oferta_format_num(u.get('Preu m2 útil'), 0)} €/m²</td></tr>"
+        for u in grup["units"]
+    )
     return f"""
-    <div style='font-family: Arial, sans-serif; min-width: 190px;'>
-      <b>{row.get('Municipi', 'Habitatge')}</b><br>
-      Preu mitjà: {oferta_format_num(row.get('Preu mitjà'), 0)} €<br>
-      Preu m² útil: {oferta_format_num(row.get('Preu m2 útil'), 0)} €/m²<br>
-      Superfície útil: {oferta_format_num(row.get('Superfície útil'), 1)} m²
+    <div style='font-family: Arial, sans-serif; min-width: 280px; max-width: 340px;'>
+      <b>{grup['Municipi']} — {titol} en aquesta ubicació</b>
+      <div style='max-height: 220px; overflow-y: auto; margin-top: 6px;'>
+        <table style='width:100%; border-collapse: collapse; font-size: 12px;'>
+          <thead>
+            <tr style='text-align:left; border-bottom: 1px solid #999;'>
+              <th>Hab.</th><th>Banys</th><th>Superf.</th><th>Preu</th><th>€/m²</th>
+            </tr>
+          </thead>
+          <tbody>{files}</tbody>
+        </table>
+      </div>
     </div>
     """
 
@@ -7405,14 +7460,22 @@ def oferta_popup_habitatge(row):
 def oferta_mapa_punts_habitatges(punts, h=680):
     tiles = "CartoDB dark_matter" if st.session_state.get("theme") == "dark" else "CartoDB positron"
     m = folium.Map([41.7, 1.6], zoom_start=8, tiles=tiles, width="100%", height=f"{h}px")
-    dades_fast = [
-        [row["latitude"], row["longitude"], oferta_popup_habitatge(row).replace("\n", " "), f"{row.get('Municipi', '')} · {oferta_format_num(row.get('Preu m2 útil'), 0)} €/m²"]
-        for row in punts
-    ]
+    dades_fast = []
+    for grup in oferta_agrupar_punts_habitatges(punts):
+        if grup["n"] > 1:
+            rang = (
+                f"{oferta_format_num(grup['preu_min'], 0)}–{oferta_format_num(grup['preu_max'], 0)} €/m²"
+                if grup["preu_min"] is not None else ""
+            )
+            tooltip = f"{grup['Municipi']} · {grup['n']} habitatges · {rang}"
+        else:
+            u = grup["units"][0]
+            tooltip = f"{grup['Municipi']} · {oferta_format_num(u.get('Preu m2 útil'), 0)} €/m²"
+        dades_fast.append([grup["latitude"], grup["longitude"], oferta_popup_grup_habitatges(grup).replace("\n", " "), tooltip])
     callback = """
     function (row) {
         var marker = L.marker(new L.LatLng(row[0], row[1]));
-        marker.bindPopup(row[2]);
+        marker.bindPopup(row[2], {maxWidth: 360});
         marker.bindTooltip(row[3]);
         return marker;
     }
