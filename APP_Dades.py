@@ -172,10 +172,6 @@ NOMBRE_VARIABLES_IDESCAT = {
     "AfiliatSS_Indústria": "Afiliats a la Seguretat Social – Indústria",
     "AfiliatSS_Serveis": "Afiliats a la Seguretat Social – Serveis",
     "AfiliatSS_Total": "Afiliats a la Seguretat Social – Total",
-    "Atur registrat_Agricultura": "Atur registrat – Agricultura",
-    "Atur registrat_Construcció": "Atur registrat – Construcció",
-    "Atur registrat_Indústria": "Atur registrat – Indústria",
-    "Atur registrat_Serveis": "Atur registrat – Serveis",
     "Atur registrat_Total": "Atur registrat – Total",
     "IRPF_Base_imposable": "Base imposable mitjana de l’IRPF (€)",
     "Matrimonis_Total": "Nombre de matrimonis",
@@ -305,10 +301,10 @@ IDESCAT_PREFIX_MAP_DP = {
     "AfiliatSS_Industria": "AfiliatSS_Indústria",
     "AfiliatSS_Serveis": "AfiliatSS_Serveis",
     "AfiliatSS_Total": "AfiliatSS_Total",
-    "Atur_registrat_Agricultura": "Atur registrat_Agricultura",
-    "Atur_registrat_Construccio": "Atur registrat_Construcció",
-    "Atur_registrat_Industria": "Atur registrat_Indústria",
-    "Atur_registrat_Serveis": "Atur registrat_Serveis",
+    # Nomes es manté "Total": el desglossament per sectors (Agricultura/
+    # Construcció/Indústria/Serveis) està sempre buit a la font actual
+    # (DT_indicadors_demanda_potencial.json) per als 947 municipis, i s'ha
+    # tret de l'app (Altres indicadors i PDF) a petició de l'usuari.
     "Atur_registrat_Total": "Atur registrat_Total",
     "IRPF_Base_imposable_declarant": "IRPF_Base_imposable",
     "Pensionistes_Total": "Pensionistes_Total",
@@ -1218,10 +1214,6 @@ def _map_df_mun_idescat_basic(df_mun_idescat: pd.DataFrame, selected_mun: str) -
         "AfiliatSS_Indústria": "Afiliats a la Seguretat Social – Indústria",
         "AfiliatSS_Serveis": "Afiliats a la Seguretat Social – Serveis",
         "AfiliatSS_Total": "Afiliats a la Seguretat Social – Total",
-        "Atur registrat_Agricultura": "Atur registrat – Agricultura",
-        "Atur registrat_Construcció": "Atur registrat – Construcció",
-        "Atur registrat_Indústria": "Atur registrat – Indústria",
-        "Atur registrat_Serveis": "Atur registrat – Serveis",
         "Atur registrat_Total": "Atur registrat – Total",
         "poblacio_activa": "Població activa",
         "poblacio_ocupada": "Població ocupada",
@@ -1461,10 +1453,6 @@ def generar_pdf_municipi_tot(
             _append_if_ok("Afiliats a la Seguretat Social – Serveis")
             _append_if_ok("Afiliats a la Seguretat Social – Total")
 
-            _append_if_ok("Atur registrat – Agricultura")
-            _append_if_ok("Atur registrat – Construcció")
-            _append_if_ok("Atur registrat – Indústria")
-            _append_if_ok("Atur registrat – Serveis")
             _append_if_ok("Atur registrat – Total")
 
             _append_if_ok("Població activa")
@@ -5685,16 +5673,12 @@ if selected=="Municipis":
         with left:
             _st_metric_pick(sel, "Afiliats a la Seguretat Social – Agricultura")
             _st_metric_pick(sel, "Afiliats a la Seguretat Social – Construcció")
-            _st_metric_pick(sel, "Atur registrat – Agricultura")
-            _st_metric_pick(sel, "Atur registrat – Construcció")
-            _st_metric_pick(sel, "Atur registrat – Indústria")
             _st_metric_pick(sel, "Població activa")
             _st_metric_pick(sel, "Població inactiva")
         with right:
             _st_metric_pick(sel, "Afiliats a la Seguretat Social – Indústria")
             _st_metric_pick(sel, "Afiliats a la Seguretat Social – Serveis")
             _st_metric_pick(sel, "Afiliats a la Seguretat Social – Total")
-            _st_metric_pick(sel, "Atur registrat – Serveis")
             _st_metric_pick(sel, "Atur registrat – Total")
             _st_metric_pick(sel, "Població ocupada")
             _st_metric_pick(sel, "Població desocupada")
