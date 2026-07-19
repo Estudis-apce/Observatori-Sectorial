@@ -238,25 +238,23 @@ VIAB_MIN_UNITATS_OFERTA = 5  # mínim d'habitatges nous en oferta (Atlas) per co
 
 # ========== RUTES / FITXERS EXTERNS ==========
 CSS_FILE = "main.css"
-LOGO_APCE = "APCE_mod_transparent.png"
-LOGO_APCE_WEB = "APCE_mod_transparent.png"
-LOGO_APCE_WEB_DARK = "APCE_mod_dark.png"
-LOGO_CLOSING = "APCE_serveis1_transparent.png"
-SHAPEFILE_MUN = "shapefile_mun.geojson"
-DATA_FILE_IDESCAT = "Idescat.json"
-DATA_FILE_CENSO = "Censo2021.json"
-DATA_FILE_INDICADORS_MUN = "Indicadors_mun.json"
-DATA_FILE_SIMPLE = "DT_simple.json"
+LOGO_APCE = "Resources/logos/APCE_mod_transparent.png"
+LOGO_APCE_WEB = "Resources/logos/APCE_mod_transparent.png"
+LOGO_APCE_WEB_DARK = "Resources/logos/APCE_mod_dark.png"
+LOGO_CLOSING = "Resources/logos/APCE_serveis1_transparent.png"
+SHAPEFILE_MUN = "Resources/JSON/shapefile_mun.geojson"
+DATA_FILE_DEMANDA_POTENCIAL = "Resources/JSON/DT_indicadors_demanda_potencial.json"
+DATA_FILE_SIMPLE = "Resources/JSON/DT_simple.json"
 # Estudi d'Oferta de nova construcció: única font, l'Excel de l'Atlas (substitueix
 # l'antic proveïdor DT_oferta_conjuntura.json + fulls històrics 2019-2025).
-DATA_FILE_ATLAS_OFERTA = "BBDD_Atlas_trimmed.json"
+DATA_FILE_ATLAS_OFERTA = "Resources/JSON/BBDD_Atlas_trimmed.json"
 
 # Informes sectorials APCE (PDF complet allotjat a apcebcn.cat): la imatge de portada
 # (ja present a la carpeta del projecte) enllaça amb el PDF corresponent.
 INFORMES_SECTORIALS = [
-    {"any": 2024, "img": "Informe-sectorial-CATALUNYA_2024_FINAL.jpg", "url": "https://apcebcn.cat/wp-content/uploads/2025/07/Informe-Sectorial-2024.pdf"},
-    {"any": 2023, "img": "Informe-sectorial-CATALUNYA_2023_FINAL.jpg", "url": "https://apcebcn.cat/wp-content/uploads/2024/08/Informe-Sectorial-2023.pdf"},
-    {"any": 2022, "img": "Informe-sectorial-CATALUNYA_2022_FINAL.jpg", "url": "https://apcebcn.cat/wp-content/uploads/2023/07/informe-sectorial-2022.pdf"},
+    {"any": 2024, "img": "Resources/informes/Informe-sectorial-CATALUNYA_2024_FINAL.jpg", "url": "https://apcebcn.cat/wp-content/uploads/2025/07/Informe-Sectorial-2024.pdf"},
+    {"any": 2023, "img": "Resources/informes/Informe-sectorial-CATALUNYA_2023_FINAL.jpg", "url": "https://apcebcn.cat/wp-content/uploads/2024/08/Informe-Sectorial-2023.pdf"},
+    {"any": 2022, "img": "Resources/informes/Informe-sectorial-CATALUNYA_2022_FINAL.jpg", "url": "https://apcebcn.cat/wp-content/uploads/2023/07/informe-sectorial-2022.pdf"},
 ]
 ATLAS_PERIODES = ["2025_H1", "2026_H1"]  # format correcte: "<any>_H1" (no "H1_<any>")
 
@@ -284,6 +282,90 @@ def _elementwise(df: pd.DataFrame, fn) -> pd.DataFrame:
     """Aplica fn a cada element del DataFrame (substitueix DataFrame.applymap,
     obsolet des de pandas 2.1, mantenint compatibilitat amb pandas < 2.1)."""
     return df.apply(lambda col: col.map(fn))
+
+# ========== DT_indicadors_demanda_potencial.json: reconciliació de noms i reshape ==========
+# El nou JSON consolidat nombra municipis/districtes amb l'article en majúscula
+# ("Ampolla, L'"), mentre que Maestro_MUN_COM_PROV.xlsx el porta en minúscula
+# ("Ampolla, l'"). Un casefold() resol tots els casos excepte 4 municipis amb
+# nom oficial realment diferent (verificat manualment contra el maestro).
+MUN_ALIAS_DP = {
+    "bigues i riells": "Bigues i Riells del Fai",
+    "castell-platja d'aro": "Castell d'Aro, Platja d'Aro i s'Agaró",
+    "sant carles de la ràpita": "Ràpita, la",
+    "masarac i vilarnadal": "Masarac",
+}
+
+# Traducció prefix-nou -> prefix-antic per a df_mun_idescat: reconstrueix la
+# columna "variable" amb la mateixa convenció (accents, "Atur registrat" amb
+# espai, poblacio_activa en minúscula) que ja esperen NOMBRE_VARIABLES_IDESCAT
+# i _map_df_mun_idescat_basic, per no haver de tocar cap dels dos diccionaris.
+IDESCAT_PREFIX_MAP_DP = {
+    "AfiliatSS_Agricultura": "AfiliatSS_Agricultura",
+    "AfiliatSS_Construccio": "AfiliatSS_Construcció",
+    "AfiliatSS_Industria": "AfiliatSS_Indústria",
+    "AfiliatSS_Serveis": "AfiliatSS_Serveis",
+    "AfiliatSS_Total": "AfiliatSS_Total",
+    "Atur_registrat_Agricultura": "Atur registrat_Agricultura",
+    "Atur_registrat_Construccio": "Atur registrat_Construcció",
+    "Atur_registrat_Industria": "Atur registrat_Indústria",
+    "Atur_registrat_Serveis": "Atur registrat_Serveis",
+    "Atur_registrat_Total": "Atur registrat_Total",
+    "IRPF_Base_imposable_declarant": "IRPF_Base_imposable",
+    "Pensionistes_Total": "Pensionistes_Total",
+    "Parc_vehicles_Total": "Parc_vehicles_Total",
+    "Residus_mun_Per_capita": "Residus_mun_per_capita",
+    "Poblacio_activitat_Activa": "poblacio_activa",
+    "Poblacio_activitat_Ocupada": "poblacio_ocupada",
+    "Poblacio_activitat_Desocupada": "poblacio_desocupada",
+    "Poblacio_activitat_Inactiva": "poblacio_inactiva",
+    "Matrimonis_Total": "Matrimonis_Total",
+    "Naixements_Total": "Naixements_Total",
+}
+# df_pob_ine: prefixos ja pre-agregats al nou JSON, sense equivalent antic a traduir.
+POB_INE_PREFIX_MAP_DP = {"pob2535": "pob2535", "pob3544": "pob3544", "estrangers": "estrangers"}
+
+
+def _build_name_lookup_dp(raw_names, canonical_names, alias_map):
+    """Retorna {nom_cru_al_json: nom_canònic_del_maestro}, resolent per casefold
+    i pels alies manuals (noms oficials diferents entre el JSON i el maestro)."""
+    cf_lookup = {str(c).casefold(): str(c) for c in canonical_names}
+    lookup = {}
+    for raw in raw_names:
+        cf = raw.casefold()
+        if cf in cf_lookup:
+            lookup[raw] = cf_lookup[cf]
+        elif cf in alias_map:
+            lookup[raw] = alias_map[cf]
+    return lookup
+
+
+def _extract_wide_dp(df_dp: pd.DataFrame, prefix: str, name_lookup: dict) -> pd.DataFrame:
+    """Extreu totes les columnes '{prefix}_{nom_cru}' de df_dp (índex = any),
+    renombrades amb el nom canònic del maestro."""
+    cols = {
+        f"{prefix}_{raw}": f"{prefix}_{canon}"
+        for raw, canon in name_lookup.items()
+        if f"{prefix}_{raw}" in df_dp.columns
+    }
+    return df_dp[list(cols.keys())].rename(columns=cols)
+
+
+def _melt_long_dp(df_dp: pd.DataFrame, prefix_map: dict, name_lookup: dict) -> pd.DataFrame:
+    """Construeix un DataFrame llarg (columna 'variable' + una columna per any) a
+    partir dels prefixos de df_dp, traduïts via prefix_map, per a tots els noms de
+    name_lookup. Reprodueix la forma que ja esperen df_mun_idescat / df_pob_ine
+    (get_year_val / latest_year_value filtren per df["variable"]==v)."""
+    years = [str(y) for y in df_dp.index]
+    records = []
+    for new_prefix, old_prefix in prefix_map.items():
+        for raw, canon in name_lookup.items():
+            col = f"{new_prefix}_{raw}"
+            if col not in df_dp.columns:
+                continue
+            rec = {"variable": f"{old_prefix}_{canon}"}
+            rec.update(zip(years, df_dp[col].values))
+            records.append(rec)
+    return pd.DataFrame(records)
 
 def _format_thousands(x, pos=None):
     try:
@@ -1165,6 +1247,17 @@ def _pick_last_val(df_long: pd.DataFrame, long_label: str):
         return int(row["last_year"]), float(row["last_value"])
     except Exception:
         return None, None
+
+
+def _st_metric_pick(sel_df: pd.DataFrame, nombre_largo: str):
+    """st_metric per a un indicador de sel/df_mun_idescat (etiqueta + any entre
+    parèntesis). Mostra 'No disponible' si el municipi no té dada per a aquest
+    indicador (p. ex. un indicador d'EMEX sense valor per a aquell municipi)."""
+    year, val = _pick_last_val(sel_df, nombre_largo)
+    if year is None or val is None:
+        st_metric(label=nombre_largo, value="No disponible")
+    else:
+        st_metric(label=f"{nombre_largo} ({year})", value=int(val))
 
 # ========== GENERADOR — MUNICIPI (ORDEN COHERENTE) ==========
 def generar_pdf_municipi_tot(
@@ -2118,7 +2211,7 @@ def add_last_cols(df, years):
     mask = ~np.isnan(arr)
     idx = mask.argmax(1)
     vals = arr[np.arange(len(df)), idx]
-    yrs  = np.array(present)[idx]
+    yrs  = np.array(present, dtype=object)[idx]  # dtype=object: assignar None a un array '<U..' el convertiria en la cadena "None"
     none_mask = ~mask.any(1)
     vals[none_mask] = np.nan
     yrs[none_mask]  = None
@@ -2136,6 +2229,17 @@ def get_year_val(df, vars_, year):
         row = df.loc[df["variable"]==v]
         if not row.empty and year in row.columns and pd.notnull(row.iloc[0][year]):
             return float(row.iloc[0][year])
+    return np.nan
+
+def get_year_val_wide(df, col, year):
+    """Equivalent de get_year_val per a un DataFrame ample amb columna 'Fecha' (any)
+    i una columna de dada per municipi (p. ex. DT_mun_y[f'poptottine_{mun}']), en
+    lloc del format llarg amb columna 'variable'."""
+    if not year or df is None or col not in df.columns:
+        return np.nan
+    row = df.loc[pd.to_numeric(df["Fecha"], errors="coerce") == int(year)]
+    if not row.empty and pd.notnull(row.iloc[0][col]):
+        return float(row.iloc[0][col])
     return np.nan
 
 def latest_year_value(df, vars_, years):
@@ -2260,26 +2364,7 @@ date_max_euribor = f"{CURRENT_YEAR_LIMIT}-12-31"
 date_max_ipc = f"{CURRENT_YEAR_LIMIT}-12-31"
 @st.cache_data(show_spinner=False)
 def import_data(trim_limit, month_limit):
-    with open(DATA_FILE_IDESCAT, 'r') as outfile:
-        list_idescat_mun = [pd.DataFrame.from_dict(item) for item in json.loads(outfile.read())]
-        idescat_muns= list_idescat_mun[0].copy()
-    with open(DATA_FILE_CENSO, 'r') as outfile:
-        list_censo = [pd.DataFrame.from_dict(item) for item in json.loads(outfile.read())]
-    with open(DATA_FILE_INDICADORS_MUN, 'r', encoding="latin-1") as outfile:
-        list_mun_idescat = json.load(outfile)
-    df_mun_idescat = pd.DataFrame(list_mun_idescat["municipis"])
-    df_pob_ine  = pd.DataFrame(list_mun_idescat.get("poblacio_edat_nacionalitat", []))
-    censo_2021= list_censo[0].copy()
-    censo_2021['Municipi'] = censo_2021['Municipi'].str.replace("L'", "l'", regex=False)
-    rentaneta_mun= list_censo[1].copy()
-    rentaneta_mun = _elementwise(rentaneta_mun, lambda x: x.replace(".", "") if isinstance(x, str) else x)
-    rentaneta_mun = rentaneta_mun.apply(_try_num_col)
-    rentaneta_mun.columns = rentaneta_mun.columns.str.replace("L'", "l'", regex=False)
-    censo_2021_dis= list_censo[2].copy()
-    rentaneta_dis = list_censo[3].copy()
-    rentaneta_dis = _elementwise(rentaneta_dis, lambda x: x.replace(".", "") if isinstance(x, str) else x)
-    rentaneta_dis = rentaneta_dis.apply(_try_num_col)
-    with open(DATA_FILE_SIMPLE, 'r') as outfile:
+    with open(DATA_FILE_SIMPLE, 'r', encoding="utf-8") as outfile:
         list_of_df = [pd.DataFrame.from_dict(item) for item in json.loads(outfile.read())]
     DT_terr= list_of_df[0].copy()
     DT_mun= list_of_df[1].copy()
@@ -2297,6 +2382,83 @@ def import_data(trim_limit, month_limit):
     DT_monthly["Fecha"] = DT_monthly["Fecha"].astype("datetime64[ns]")
     maestro_mun= list_of_df[13].copy()
     maestro_dis= list_of_df[14].copy()
+
+    # ---- DT_indicadors_demanda_potencial.json: censo_2021, censo_2021_dis,
+    # rentaneta_mun, rentaneta_dis, idescat_muns, df_mun_idescat, df_pob_ine ----
+    with open(DATA_FILE_DEMANDA_POTENCIAL, "r", encoding="utf-8") as outfile:
+        list_dp = json.load(outfile)
+    df_dp = pd.DataFrame(list_dp).set_index("Fecha")
+    df_dp.index = df_dp.index.astype(int)
+
+    mun_raw_names = {k[len("estrangers_"):] for k in df_dp.columns if k.startswith("estrangers_")}
+    mun_lookup = _build_name_lookup_dp(mun_raw_names, maestro_mun["Municipi"].astype(str), MUN_ALIAS_DP)
+    dis_raw_names = {k[len("rentahogar_"):] for k in df_dp.columns if k.startswith("rentahogar_")}
+    dis_lookup = _build_name_lookup_dp(dis_raw_names, maestro_dis["Districte"].astype(str), {})
+    assert set(mun_lookup.values()) == set(maestro_mun["Municipi"].astype(str)), \
+        "DT_indicadors_demanda_potencial.json: falten municipis del maestro al mapeig de noms"
+    assert set(dis_lookup.values()) == set(maestro_dis["Districte"].astype(str)), \
+        "DT_indicadors_demanda_potencial.json: falten districtes del maestro al mapeig de noms"
+
+    row21 = df_dp.loc[2021]
+    censo_2021_rows = []
+    for raw, canon in mun_lookup.items():
+        def _g(prefix, _raw=raw):
+            return row21.get(f"{prefix}_{_raw}", np.nan)
+        pobtot = _g("c21poblaciototal")
+        tinenca = _g("c21tinencatotal")
+        censo_2021_rows.append({
+            "Municipi": canon,
+            "1": _g("c21hogar1"), "2": _g("c21hogar2"), "3": _g("c21hogar3"),
+            "4": _g("c21hogar4"), "5 o más": _g("c21hogar5mes"),
+            "Tamaño_hogar_frecuente": _g("c21hogarfrequent"),
+            "Tamaño medio del hogar": _g("c21midallar"),
+            "Perc_extranjera": _g("c21estrangersc21") / pobtot * 100 if pd.notnull(pobtot) else np.nan,
+            "Porc_Edu_superior": _g("c21edusuperior") / pobtot * 100 if pd.notnull(pobtot) else np.nan,
+            "Perc_propiedad": _g("c21propietat") / tinenca * 100 if pd.notnull(tinenca) else np.nan,
+            "Perc_alquiler": _g("c21lloguer") / tinenca * 100 if pd.notnull(tinenca) else np.nan,
+            "Perc_noprincipales_y": _g("c21noprincipals") / tinenca * 100 if pd.notnull(tinenca) else np.nan,
+            "Edad media": _g("c21edathabitatge"),
+            "Superficie media": _g("c21superfmitjana"),
+        })
+    censo_2021 = pd.DataFrame(censo_2021_rows)
+
+    censo_2021_dis_rows = []
+    for raw, canon in dis_lookup.items():
+        def _g(prefix, _raw=raw):
+            return row21.get(f"{prefix}_{_raw}", np.nan)
+        noprinc_frac = _g("c21percnoprincipals")
+        censo_2021_dis_rows.append({
+            "Distrito": canon,
+            "1": _g("c21hogar1"), "2": _g("c21hogar2"), "3": _g("c21hogar3"),
+            "4": _g("c21hogar4"), "5 o más": _g("c21hogar5mes"),
+            "Perc_extranjera": _g("c21percextrangera"),
+            "Tamaño medio del hogar": _g("c21midallar"),
+            "Perc_edusuperior": _g("c21percedusuperior"),
+            "Perc_propiedad": _g("c21percpropietat"),
+            "Perc_alquiler": _g("c21perclloguer"),
+            "Perc_noprincipales": noprinc_frac * 100 if pd.notnull(noprinc_frac) else np.nan,
+            "Edad media": _g("c21edathabitatge"),
+            "Superficie Media": _g("c21superfmitjana"),
+        })
+    censo_2021_dis = pd.DataFrame(censo_2021_dis_rows)
+
+    rentaneta_mun = _extract_wide_dp(df_dp, "rendaneta", mun_lookup)
+    rentaneta_mun.columns = [c.replace("rendaneta_", "rentanetahogar_", 1) for c in rentaneta_mun.columns]
+    rentaneta_mun = rentaneta_mun.reset_index().rename(columns={"Fecha": "Año"})
+
+    rentaneta_dis = _extract_wide_dp(df_dp.loc[2015:2021], "rentahogar", dis_lookup)
+    rentaneta_dis = rentaneta_dis.reset_index().rename(columns={"Fecha": "Año"})
+
+    quota_integra = _extract_wide_dp(df_dp, "IBI_Quota_integra", mun_lookup)
+    quota_integra.columns = [c.replace("IBI_Quota_integra_", "", 1) for c in quota_integra.columns]
+    nombre_rebuts = _extract_wide_dp(df_dp, "IBI_Nombre_rebuts", mun_lookup)
+    nombre_rebuts.columns = [c.replace("IBI_Nombre_rebuts_", "", 1) for c in nombre_rebuts.columns]
+    idescat_muns = quota_integra.div(nombre_rebuts)
+    idescat_muns.columns = [f"IBI_quota_{c}" for c in idescat_muns.columns]
+    idescat_muns = idescat_muns.reset_index().rename(columns={"Fecha": "Any"})
+
+    df_mun_idescat = _melt_long_dp(df_dp, IDESCAT_PREFIX_MAP_DP, mun_lookup)
+    df_pob_ine = _melt_long_dp(df_dp, POB_INE_PREFIX_MAP_DP, mun_lookup)
 
     DT_monthly = DT_monthly[DT_monthly["Fecha"]<=month_limit]
     DT_terr = DT_terr[DT_terr["Fecha"]<=trim_limit]
@@ -5416,34 +5578,44 @@ if selected=="Municipis":
         )
 
 
-        POP_KEYS=[f"{selected_mun}_Total_Todas las edades", f"{selected_mun}_Total_Totes les edats"]
-        AGE_25_34=[[f"{selected_mun}_Total_De 25 a 29 años", f"{selected_mun}_Total_De 25 a 29 anys"],
-                [f"{selected_mun}_Total_De 30 a 34 años", f"{selected_mun}_Total_De 30 a 34 anys"]]
-        AGE_35_44=[[f"{selected_mun}_Total_De 35 a 39 años", f"{selected_mun}_Total_De 35 a 39 anys"],
-                [f"{selected_mun}_Total_De 40 a 44 años", f"{selected_mun}_Total_De 40 a 44 anys"]]
-
+        # DT_indicadors_demanda_potencial.json no porta cap variable de població
+        # total ni bins fins d'edat (només pob2535_/pob3544_ ja pre-sumats) -> el
+        # total de població es pren de DT_mun_y["poptottine_"], ja carregat des de
+        # DT_simple.json i amb cobertura més àmplia (2008-2025) que el nou JSON.
+        POP_COL = f"poptottine_{selected_mun}"
+        AGE2534_VAR = f"pob2535_{selected_mun}"
+        AGE3544_VAR = f"pob3544_{selected_mun}"
 
         # Población total y crecimiento
-        pop_year, pop_val = latest_year_value(df_pob_ine, POP_KEYS, YEARS)
-        prev_pop_year, pop_prev = prev_year_value(df_pob_ine, POP_KEYS, pop_year, YEARS)
+        pop_df = DT_mun_y.loc[:, ["Fecha", POP_COL]].dropna().sort_values("Fecha") if POP_COL in DT_mun_y.columns else DT_mun_y.iloc[0:0]
+        if not pop_df.empty:
+            pop_year = str(int(pop_df["Fecha"].iloc[-1]))
+            pop_val = float(pop_df[POP_COL].iloc[-1])
+        else:
+            pop_year, pop_val = None, np.nan
+        if len(pop_df) >= 2:
+            prev_pop_year = str(int(pop_df["Fecha"].iloc[-2]))
+            pop_prev = float(pop_df[POP_COL].iloc[-2])
+        else:
+            prev_pop_year, pop_prev = None, np.nan
         creix = (pop_val/pop_prev - 1)*100 if pd.notnull(pop_val) and pd.notnull(pop_prev) and pop_prev>0 else np.nan
 
-        # Estructura por edades (cada tramo con su año válido y mismo denominador)
-        age2534_year, p2534 = latest_year_sum_age(AGE_25_34, YEARS, df_pob_ine)
-        den2534 = get_year_val(df_pob_ine, POP_KEYS, age2534_year)
+        # Estructura por edades (ja pre-sumada al nou JSON; mateix denominador de població)
+        age2534_year, p2534 = latest_year_value(df_pob_ine, [AGE2534_VAR], YEARS)
+        den2534 = get_year_val_wide(DT_mun_y, POP_COL, age2534_year)
         pct2534 = (p2534/den2534*100) if pd.notnull(p2534) and pd.notnull(den2534) and den2534>0 else np.nan
 
-        age3544_year, p3544 = latest_year_sum_age(AGE_35_44, YEARS, df_pob_ine)
-        den3544 = get_year_val(df_pob_ine, POP_KEYS, age3544_year)
+        age3544_year, p3544 = latest_year_value(df_pob_ine, [AGE3544_VAR], YEARS)
+        den3544 = get_year_val_wide(DT_mun_y, POP_COL, age3544_year)
         pct3544 = (p3544/den3544*100) if pd.notnull(p3544) and pd.notnull(den3544) and den3544>0 else np.nan
 
         # Nacimientos y matrimonios (año propio y mismo denominador)
         naix_year, naix_val = latest_year_value(df_mun_idescat, [f"Naixements_Total_{selected_mun}"], YEARS)
-        naix_pop = get_year_val(df_pob_ine, POP_KEYS, naix_year)
+        naix_pop = get_year_val_wide(DT_mun_y, POP_COL, naix_year)
         naix_pct = (naix_val/naix_pop*100) if pd.notnull(naix_val) and pd.notnull(naix_pop) and naix_pop>0 else np.nan
 
         matr_year, matr_val = latest_year_value(df_mun_idescat, [f"Matrimonis_Total_{selected_mun}"], YEARS)
-        matr_pop = get_year_val(df_pob_ine, POP_KEYS, matr_year)
+        matr_pop = get_year_val_wide(DT_mun_y, POP_COL, matr_year)
         matr_pct = (matr_val/matr_pop*100) if pd.notnull(matr_val) and pd.notnull(matr_pop) and matr_pop>0 else np.nan
 
         subset_tamaño_mun = censo_2021[censo_2021["Municipi"] == selected_mun][["1", "2", "3", "4", "5 o más"]]
@@ -5455,14 +5627,8 @@ if selected=="Municipis":
             st_metric("Proporció de població nacional", value=f"""{round(100 - censo_2021[censo_2021["Municipi"]==selected_mun]["Perc_extranjera"].values[0],2):,.0f}%""")
             st_metric(label=f"Població total ({pop_year})", value=fmt_int(pop_val))
             st_metric(label=f"Població 25–34 anys (% sobre total) ({age2534_year})", value=fmt_pct(pct2534))
-            st_metric(
-                label=f"Nombre de naixements ({int(sel[sel['nombre_largo']=='Nombre de naixements']['last_year'].values[0])})",
-                value=int(sel[sel['nombre_largo']=='Nombre de naixements']['last_value'].values[0])
-            )
-            st_metric(
-                label=f"Nombre de matrimonis ({int(sel[sel['nombre_largo']=='Nombre de matrimonis']['last_year'].values[0])})",
-                value=int(sel[sel['nombre_largo']=='Nombre de matrimonis']['last_value'].values[0])
-            )
+            _st_metric_pick(sel, "Nombre de naixements")
+            _st_metric_pick(sel, "Nombre de matrimonis")
 
         with right:
             st_metric("Grandària mitjana de la llar", value=f"""{round(censo_2021[censo_2021["Municipi"]==selected_mun]["Tamaño medio del hogar"].values[0],2)}""")
@@ -5484,31 +5650,24 @@ if selected=="Municipis":
         st.markdown("<div class='custom-box'>ECONOMIA, RENDA I ALTRES</div>", unsafe_allow_html=True)
         left, right = st.columns((1,1))
         with left:
-            st_metric("Renda neta per llar (2021)", value=f"""{(rentaneta_mun["rentanetahogar_" + selected_mun].values[-1]):,.0f}""")
-            st_metric(
-                label=f"Nombre de pensionistes ({int(sel[sel['nombre_largo']=='Nombre de pensionistes']['last_year'].values[0])})",
-                value=int(sel[sel['nombre_largo']=='Nombre de pensionistes']['last_value'].values[0])
-            )
-            st_metric(
-                label=f"Parc total de vehicles ({int(sel[sel['nombre_largo']=='Parc total de vehicles']['last_year'].values[0])})",
-                value=int(sel[sel['nombre_largo']=='Parc total de vehicles']['last_value'].values[0])
-            )
+            _rn_col = "rentanetahogar_" + selected_mun
+            _rn_data = rentaneta_mun[["Año", _rn_col]].dropna() if _rn_col in rentaneta_mun.columns else rentaneta_mun.iloc[0:0]
+            if not _rn_data.empty:
+                st_metric(f"Renda neta per llar ({int(_rn_data['Año'].values[-1])})", value=f"""{_rn_data[_rn_col].values[-1]:,.0f}""")
+            else:
+                st_metric("Renda neta per llar", value="No disponible")
+            _st_metric_pick(sel, "Nombre de pensionistes")
+            _st_metric_pick(sel, "Parc total de vehicles")
             st_plotly_chart(bar_plotly_demografia(rentaneta_mun.rename(columns={"Año":"Any"}).set_index("Any"), ["rentanetahogar_" + selected_mun], "Evolució anual de la renda mitjana neta", "€", 2015), use_container_width=True, responsive=True)
         with right:
-            st_metric(
-                label=f"Base imposable mitjana de l’IRPF (€) ({int(sel[sel['nombre_largo']=='Base imposable mitjana de l’IRPF (€)']['last_year'].values[0])})",
-                value=int(sel[sel['nombre_largo']=='Base imposable mitjana de l’IRPF (€)']['last_value'].values[0])
-            )
+            _st_metric_pick(sel, "Base imposable mitjana de l’IRPF (€)")
             _ibi_col = "IBI_quota_" + selected_mun
             _ibi_data = idescat_muns[["Any", _ibi_col]].dropna() if _ibi_col in idescat_muns.columns else idescat_muns.iloc[0:0]
             if not _ibi_data.empty:
                 st_metric(f"Quota íntegra de l'Impost sobre Béns Immobles (IBI) ({_ibi_data['Any'].values[0]})", value=f"""{int(_ibi_data[_ibi_col].values[0]):,.0f}""")
             else:
                 st_metric("Quota íntegra de l'Impost sobre Béns Immobles (IBI)", value="No disponible")
-            st_metric(
-                label=f"Residus municipals per càpita (kg/hab/dia) ({int(sel[sel['nombre_largo']=='Residus municipals per càpita (kg/hab/dia)']['last_year'].values[0])})",
-                value=int(sel[sel['nombre_largo']=='Residus municipals per càpita (kg/hab/dia)']['last_value'].values[0])
-            )
+            _st_metric_pick(sel, "Residus municipals per càpita (kg/hab/dia)")
             st_plotly_chart(donut_plotly_demografia(subset_tamaño_mun_aux,["Tamany", "Llars"], "Distribució del nombre de membres per llar", "Llars"), use_container_width=True, responsive=True)
         st.markdown("<div class='custom-box'>CARACTERÍSTIQUES DEL PARC D'HABITATGE (2021)</div>", unsafe_allow_html=True)
         left, right = st.columns((1,1))
@@ -5524,65 +5683,21 @@ if selected=="Municipis":
         st.markdown("<div class='custom-box'>MERCAT LABORAL</div>", unsafe_allow_html=True)
         left, right = st.columns((1,1))
         with left:
-            st_metric(
-                label=f"Afiliats a la Seguretat Social – Agricultura ({int(sel[sel['nombre_largo']=='Afiliats a la Seguretat Social – Agricultura']['last_year'].values[0])})",
-                value=int(sel[sel['nombre_largo']=='Afiliats a la Seguretat Social – Agricultura']['last_value'].values[0])
-            )
-            st_metric(
-                label=f"Afiliats a la Seguretat Social – Construcció ({int(sel[sel['nombre_largo']=='Afiliats a la Seguretat Social – Construcció']['last_year'].values[0])})",
-                value=int(sel[sel['nombre_largo']=='Afiliats a la Seguretat Social – Construcció']['last_value'].values[0])
-            )
-            st_metric(
-                label=f"Atur registrat – Agricultura ({int(sel[sel['nombre_largo']=='Atur registrat – Agricultura']['last_year'].values[0])})",
-                value=int(sel[sel['nombre_largo']=='Atur registrat – Agricultura']['last_value'].values[0])
-            )
-            st_metric(
-                label=f"Atur registrat – Construcció ({int(sel[sel['nombre_largo']=='Atur registrat – Construcció']['last_year'].values[0])})",
-                value=int(sel[sel['nombre_largo']=='Atur registrat – Construcció']['last_value'].values[0])
-            )
-
-            st_metric(
-                label=f"Atur registrat – Indústria ({int(sel[sel['nombre_largo']=='Atur registrat – Indústria']['last_year'].values[0])})",
-                value=int(sel[sel['nombre_largo']=='Atur registrat – Indústria']['last_value'].values[0])
-            )
-            st_metric(
-                label=f"Població activa ({int(sel[sel['nombre_largo']=='Població activa']['last_year'].values[0])})",
-                value=int(sel[sel['nombre_largo']=='Població activa']['last_value'].values[0])
-            )
-            st_metric(
-                label=f"Població inactiva ({int(sel[sel['nombre_largo']=='Població inactiva']['last_year'].values[0])})",
-                value=int(sel[sel['nombre_largo']=='Població inactiva']['last_value'].values[0])
-            )
+            _st_metric_pick(sel, "Afiliats a la Seguretat Social – Agricultura")
+            _st_metric_pick(sel, "Afiliats a la Seguretat Social – Construcció")
+            _st_metric_pick(sel, "Atur registrat – Agricultura")
+            _st_metric_pick(sel, "Atur registrat – Construcció")
+            _st_metric_pick(sel, "Atur registrat – Indústria")
+            _st_metric_pick(sel, "Població activa")
+            _st_metric_pick(sel, "Població inactiva")
         with right:
-            st_metric(
-                label=f"Afiliats a la Seguretat Social – Indústria ({int(sel[sel['nombre_largo']=='Afiliats a la Seguretat Social – Indústria']['last_year'].values[0])})",
-                value=int(sel[sel['nombre_largo']=='Afiliats a la Seguretat Social – Indústria']['last_value'].values[0])
-            )
-            st_metric(
-                label=f"Afiliats a la Seguretat Social – Serveis ({int(sel[sel['nombre_largo']=='Afiliats a la Seguretat Social – Serveis']['last_year'].values[0])})",
-                value=int(sel[sel['nombre_largo']=='Afiliats a la Seguretat Social – Serveis']['last_value'].values[0])
-            )
-            st_metric(
-                label=f"Afiliats a la Seguretat Social – Total ({int(sel[sel['nombre_largo']=='Afiliats a la Seguretat Social – Total']['last_year'].values[0])})",
-                value=int(sel[sel['nombre_largo']=='Afiliats a la Seguretat Social – Total']['last_value'].values[0])
-            )
-
-            st_metric(
-                label=f"Atur registrat – Serveis ({int(sel[sel['nombre_largo']=='Atur registrat – Serveis']['last_year'].values[0])})",
-                value=int(sel[sel['nombre_largo']=='Atur registrat – Serveis']['last_value'].values[0])
-            )
-            st_metric(
-                label=f"Atur registrat – Total ({int(sel[sel['nombre_largo']=='Atur registrat – Total']['last_year'].values[0])})",
-                value=int(sel[sel['nombre_largo']=='Atur registrat – Total']['last_value'].values[0])
-            )
-            st_metric(
-                label=f"Població ocupada ({int(sel[sel['nombre_largo']=='Població ocupada']['last_year'].values[0])})",
-                value=int(sel[sel['nombre_largo']=='Població ocupada']['last_value'].values[0])
-            )
-            st_metric(
-                label=f"Població desocupada ({int(sel[sel['nombre_largo']=='Població desocupada']['last_year'].values[0])})",
-                value=int(sel[sel['nombre_largo']=='Població desocupada']['last_value'].values[0])
-            )
+            _st_metric_pick(sel, "Afiliats a la Seguretat Social – Indústria")
+            _st_metric_pick(sel, "Afiliats a la Seguretat Social – Serveis")
+            _st_metric_pick(sel, "Afiliats a la Seguretat Social – Total")
+            _st_metric_pick(sel, "Atur registrat – Serveis")
+            _st_metric_pick(sel, "Atur registrat – Total")
+            _st_metric_pick(sel, "Població ocupada")
+            _st_metric_pick(sel, "Població desocupada")
 if selected=="Districtes de Barcelona":
     left, center, right= st.columns((1,1,1))
     with left:
