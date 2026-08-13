@@ -439,8 +439,10 @@ div[data-testid="stMetric"]  label{
   }
 }
 
-/* Icones del menú principal (4 entrades: Indicadors Territorials / Estudi d'oferta /
-   Informe de mercat i sectorial / Viabilitat financera). */
+/* Icones del menú principal (3 entrades actives: Indicadors Territorials / Estudi
+   d'oferta / Informe de mercat i sectorial. La 4a icona, "Viabilitat financera",
+   es deixa aquí sense usar -- si es reactiva la pestanya (veure comentari a
+   APP_Dades.py, línia ~2325), l'icona ja hi és, no cal tornar-la a escriure. */
 .element-container:has(.menu-nav-anchor) + .element-container [role="radiogroup"] {
   & > label:nth-child(1) { --nav-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2m6.93 6h-2.95a15.7 15.7 0 0 0-1.38-3.56A8.03 8.03 0 0 1 18.92 8M12 4.04c.83 1.2 1.48 2.53 1.91 3.96h-3.82c.43-1.43 1.08-2.76 1.91-3.96M4.26 14a7.8 7.8 0 0 1 0-4h3.38a16.5 16.5 0 0 0 0 4zm.82 2h2.95c.32 1.25.78 2.45 1.38 3.56A7.99 7.99 0 0 1 5.08 16m2.95-8H5.08a7.99 7.99 0 0 1 4.33-3.56A15.7 15.7 0 0 0 8.03 8M12 19.96c-.83-1.2-1.48-2.53-1.91-3.96h3.82c-.43 1.43-1.08 2.76-1.91 3.96M14.34 14H9.66a14.8 14.8 0 0 1 0-4h4.68a14.8 14.8 0 0 1 0 4m.25 5.56c.6-1.11 1.06-2.31 1.38-3.56h2.95a8.03 8.03 0 0 1-4.33 3.56M16.36 14a16.5 16.5 0 0 0 0-4h3.38a7.8 7.8 0 0 1 0 4z'/%3E%3C/svg%3E"); }
   & > label:nth-child(2) { --nav-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M17 11V3H7v4H3v14h8v-4h2v4h8V11zM7 19H5v-2h2zm0-4H5v-2h2zm0-4H5V9h2zm4 4H9v-2h2zm0-4H9V9h2zm0-4H9V5h2zm4 8h-2v-2h2zm0-4h-2V9h2zm0-4h-2V5h2zm4 12h-2v-2h2zm0-4h-2v-2h2zm0-4h-2V9h2z'/%3E%3C/svg%3E"); }
@@ -448,29 +450,10 @@ div[data-testid="stMetric"]  label{
   & > label:nth-child(4) { --nav-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M7 2h10a2 2 0 0 1 2 2v16a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2m0 2v4h10V4H7m0 6v2h2v-2H7m4 0v2h2v-2h-2m4 0v2h2v-2h-2m-8 4v2h2v-2H7m4 0v2h2v-2h-2m4 0v4h2v-4h-2m-8 4v2h2v-2H7m4 0v2h2v-2h-2'/%3E%3C/svg%3E"); }
 }
 
-/* El menú principal (4 entrades) es mostra en graella 2x2 en lloc de fila que
-   es trenca en 3+1; els altres menús (Indicadors Territorials, Estudi d'oferta)
-   mantenen la fila flexible, més adequada per als seus 7 i 5 elements. */
-.element-container:has(.menu-nav-anchor) + .element-container [role="radiogroup"] {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(200px, 1fr));
-  /* Sense width:100% la graella s'encongeix al contingut (dins el flex del
-     Streamlit column) i deixa un buit gran entre l'última columna i la vora
-     de la targeta blanca del capçalera. */
-  width: 100%;
-}
-/* Les 2 columnes de la graella tenen el mateix ample (el que necessita
-   l'etiqueta més llarga, "Estudi d'oferta d'obra nova APCE"). Sense centrar,
-   les etiquetes més curtes ("Viabilitat financera") queden alineades a
-   l'esquerra i deixen un buit gran a la dreta dins la seva pròpia cel·la. */
-.element-container:has(.menu-nav-anchor) + .element-container [role="radiogroup"] > label {
-  justify-content: center;
-}
-@media (max-width: 760px) {
-  .element-container:has(.menu-nav-anchor) + .element-container [role="radiogroup"] {
-    grid-template-columns: 1fr;
-  }
-}
+/* Amb 3 entrades el menú principal ja no necessita la graella 2x2 que calia
+   quan n'hi havia 4 (evitava que la fila es trenqués en 3+1). Ara reutilitza
+   la mateixa fila flexible centrada de la regla compartida de dalt (línia
+   ~374), igual que "Indicadors Territorials" (7) i "Estudi d'oferta" (5). */
 
 /* Icones d'"Indicadors Territorials" (7 entrades: mateixos pictogrames que abans de
    reagrupar-los sota un segon menú). */
@@ -716,8 +699,9 @@ html, body, [data-testid="stAppViewContainer"], section.main { scroll-behavior: 
 }
 .informe-sectorial-img {
   display: block;
-  width: 100%;
+  width: 75%;
   height: auto;
+  margin: 0 auto;
 }
 .informe-sectorial-caption,
 .informe-sectorial-link:hover .informe-sectorial-caption {
