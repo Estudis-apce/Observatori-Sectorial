@@ -2571,7 +2571,7 @@ def import_data(trim_limit, month_limit):
 
     return([DT_monthly, DT_terr, DT_terr_y, DT_mun_def, DT_mun_y_def, DT_dis, DT_dis_y, maestro_mun, maestro_dis, censo_2021, rentaneta_mun, censo_2021_dis, rentaneta_dis, idescat_muns, df_mun_idescat, df_pob_ine, DT_mun_y])
 import_data = auto_spinner(import_data)
-DT_monthly, DT_terr, DT_terr_y, DT_mun, DT_mun_y, DT_dis, DT_dis_y, maestro_mun, maestro_dis, censo_2021, rentaneta_mun, censo_2021_dis, rentaneta_dis, idescat_muns, df_mun_idescat, df_pob_ine, DT_mun_y_all = import_data(f"{CURRENT_YEAR_LIMIT}-05-01", f"{CURRENT_YEAR_LIMIT}-05-01")
+DT_monthly, DT_terr, DT_terr_y, DT_mun, DT_mun_y, DT_dis, DT_dis_y, maestro_mun, maestro_dis, censo_2021, rentaneta_mun, censo_2021_dis, rentaneta_dis, idescat_muns, df_mun_idescat, df_pob_ine, DT_mun_y_all = import_data(f"{CURRENT_YEAR_LIMIT}-07-01", f"{CURRENT_YEAR_LIMIT}-07-01")
 
 
 # ========== ESTUDI D'OFERTA DE NOVA CONSTRUCCIÓ (font: Atlas) ==========
