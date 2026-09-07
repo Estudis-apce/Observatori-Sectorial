@@ -179,8 +179,45 @@ table tbody tr:last-of-type {
   border-bottom: 2px solid var(--app-primary);
 }
 
-table tbody td {
-  padding: clamp(6px, 1vw, 12px) clamp(8px, 1.2vw, 15px);
+/* Encoixinat lateral reduit: amb taules de moltes columnes, cada pixel de padding
+   es multiplica per columna i era part del scroll horitzontal. El vertical es manté
+   prou alt per no atapeir la lectura de les files.
+   IMPORTANT: cal pujar l'especificitat amb [data-testid="stMarkdownContainer"].
+   Streamlit aplica el seu propi `padding: 6px 13px` amb un selector de classe
+   (.st-emotion-cache-XXXX th, ... td), que guanya a un `table tbody td` pelat -- per
+   això la regla que hi havia abans aquí no arribava a aplicar-se mai. No es pot
+   apuntar a aquesta classe directament: canvia amb cada versió de Streamlit. */
+[data-testid="stMarkdownContainer"] table thead th,
+[data-testid="stMarkdownContainer"] table tbody th,
+[data-testid="stMarkdownContainer"] table tbody td {
+  padding: clamp(5px, 0.8vw, 9px) clamp(4px, 0.6vw, 8px);
+}
+
+/* ==========================================================================
+   PRIMERA COLUMNA CONGELADA
+   Les taules van dins d'un contenidor amb scroll horitzontal: en desplaçar-se
+   cap a la dreta es perdia de vista quin indicador s'estava mirant. Amb la
+   primera columna fixada, el nom acompanya sempre les xifres.
+   Les taules venen de df.style.to_html(), on la primera cel·la de cada fila és
+   un <th class="row_heading"> i la de les capçaleres, <th class="index_name">.
+   Cal fons opac (si no, les xifres es transparenten per sota en desplaçar-se) i
+   respectar el color de les files alternes.
+   ========================================================================== */
+table th.row_heading,
+table th.index_name {
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  background-color: var(--app-bg);
+  text-align: left;
+}
+table tbody tr:nth-of-type(even) th.row_heading {
+  background-color: var(--app-table-alt);
+}
+table thead th.index_name {
+  z-index: 3;
+  background-color: var(--app-primary);
+  color: var(--app-text-inverse);
 }
 
 /* El contenidor que envolta la taula (df.to_html) permet scroll lateral quan la
