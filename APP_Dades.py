@@ -7,6 +7,7 @@ from typing import List, Tuple, Optional, Iterable
 import base64
 import io
 import json
+import os
 import re
 
 # ---------------------------
@@ -64,6 +65,26 @@ def auto_spinner(func):
         with st.spinner("Carregant dades..."):
             return func(*args, **kwargs)
     return wrapper
+
+# ========== SECCIONS EN PROVES ==========
+# Interruptor per a les seccions acabades però encara no publicades ("Viabilitat
+# Financera" i "Fitxa de demanda potencial"). Estan APAGADES per defecte, de manera
+# que a producció no es veuen encara que el codi hi sigui; s'encenen només on hi ha
+# el fitxer marcador (que està al .gitignore i, per tant, mai arriba al repositori)
+# o la variable d'entorn.
+#
+# Substitueix el sistema anterior de mantenir dos fitxers (APP_Dades.py i
+# APP_Dades_sin_ficha.py): cada correcció s'havia d'aplicar dues vegades i n'hi
+# havia prou amb un despistat en fer commit per publicar sense voler el que
+# encara no tocava. Ara hi ha un únic fitxer i el que decideix què es veu és
+# l'entorn on s'executa, no quin fitxer es puja.
+#
+# Per veure-les en local: crear un fitxer buit anomenat ".seccions-en-proves" al
+# costat d'aquest script, o executar amb APCE_SECCIONS_EN_PROVES=1.
+SECCIONS_EN_PROVES = (
+    os.getenv("APCE_SECCIONS_EN_PROVES") == "1"
+    or (Path(__file__).resolve().parent / ".seccions-en-proves").exists()
+)
 
 # ========== COLORES / CONFIG ==========
 # Paleta "Forest & Coral": mateixa estructura que "Navy & Coral" (primary i text
@@ -143,8 +164,22 @@ def st_plotly_chart(fig, **kwargs):
         legend=dict(font=dict(color=palette["text"])),
         title=dict(font=dict(color=palette["text"])),
     )
-    fig.update_xaxes(color=palette["text"], gridcolor=palette["border"], zerolinecolor=palette["border"])
-    fig.update_yaxes(color=palette["text"], gridcolor=palette["border"], zerolinecolor=palette["border"])
+    # `color=` és una drecera que NOMÉS s'aplica als subcamps que no estiguin ja
+    # definits: si la plantilla activa de Plotly fixa xaxis.tickfont.color (com fa la
+    # plantilla fosca que Streamlit activava segons el navegador del visitant), la
+    # drecera es queda sense efecte i les etiquetes dels eixos sortien gairebé
+    # invisibles sobre el fons clar (contrast mesurat 1,15:1). Fixant tickfont i
+    # title.font explícitament, el color queda a la figura i guanya a qualsevol
+    # plantilla, així que els gràfics segueixen sempre l'interruptor clar/fosc de l'app.
+    _eix = dict(
+        color=palette["text"],
+        tickfont_color=palette["text"],
+        title_font_color=palette["text"],
+        gridcolor=palette["border"],
+        zerolinecolor=palette["border"],
+    )
+    fig.update_xaxes(**_eix)
+    fig.update_yaxes(**_eix)
     return st.plotly_chart(fig, **kwargs)
 
 
@@ -161,7 +196,12 @@ GLOBAL_PALETTE = {
 # fins a 50m2 ... més de 150m2) no repeteixin color entre la 1a/5a i 2a/6a
 # categoria (amb només 4 colors es confonien visualment).
 PLOTLY_PALETTE = ["#2d538f", "#C1571E", "#2F4A38", "#6B6B6B", "#7A5C8E", "#C9A227"]
-PLOTLY_PALETTE_DEMOGRAFIA = ["#6495ED", "#7DF9FF", "#87CEEB", "#A7C7E7", "#FFA07A"]
+# Paleta de demografia harmonitzada amb la identitat de l'app (2026-09-07). Abans eren
+# blaus/cian pastel (#6495ED, #7DF9FF, #87CEEB...) que desentonaven amb la gama càlida
+# de la resta de la web i, a més, deixaven el text blanc de les barres amb un contrast
+# de només 2,97:1. Ara: terracota (primary), or (accent), verd bosc (brand_dark), blau
+# petroli suau i marró canyella -- càlida però amb 5 tons clarament diferenciables.
+PLOTLY_PALETTE_DEMOGRAFIA = ["#C1571E", "#E3A94C", "#2F4A38", "#4E7C8A", "#8A5A3B"]
 
 # Noms llargs (catalá) de les variables d'idescat_muns / df_mun_idescat, usats a la
 # pestanya "Altres indicadors" (Municipis) i a l'"Informe de mercat" del PDF.
@@ -231,6 +271,26 @@ VIAB_IVA_SOLAR_PCT = 0.16
 VIAB_IVA_EDIFICACIO_PCT = 0.07
 VIAB_GASTOS_CONSTITUCIO_PCT = 0.01
 VIAB_MIN_UNITATS_OFERTA = 5  # mínim d'habitatges nous en oferta (Atlas) per considerar el preu/m² representatiu
+
+# ========== MAPA BASE DELS MAPES ==========
+# Fons dels mapes (folium i Plotly). Abans es feien servir els mapes base de CARTO
+# ("CartoDB positron"/"voyager"/"dark_matter" a folium, mapbox_style="carto-positron"
+# a Plotly), però CARTO ha passat a exigir clave d'API: les seves tessel·les arriben
+# amb la marca d'aigua "API KEY REQUIRED" impresa a sobre (2026-09-07, visible a la
+# web publicada). ESRI World Light/Dark Gray fa la mateixa funció -- fons gris
+# minimalista que deixa destacar les dades -- sense clau ni registre.
+# Nota: l'ordre de la URL és {z}/{y}/{x} (ESRI), no {z}/{x}/{y}.
+TILES_CLAR = "https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}"
+TILES_FOSC = "https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}"
+TILES_ATRIBUCIO = "Esri, HERE, Garmin, © OpenStreetMap contributors"
+
+# Alçada única de tots els mapes folium. streamlit-folium 0.22 calcula malament
+# l'alçada de l'iframe amb use_container_width=True (mesurat: iframes de 2.200-3.100 px
+# per a mapes de 700 px, deixant un forat buit enorme sota cada mapa). Com que el
+# component no és fiable, l'alçada es fixa també per CSS a main.css
+# (`iframe[title="streamlit_folium.st_folium"]`), i per això ha de ser la mateixa
+# a tots els mapes: si es canvia aquí, cal canviar-la també allà.
+MAPA_ALCADA = 720
 
 # ========== RUTES / FITXERS EXTERNS ==========
 CSS_FILE = "main.css"
@@ -763,11 +823,18 @@ def _styled_table_from_df(df, max_rows: Optional[int] = None, max_cols: int = 12
 
     tbl = Table(data, repeatRows=1)
 
-    try:
-        total_width = 1.15  # 15% más ancha
-        tbl._argW = [w * total_width if w else None for w in tbl._argW]
-    except Exception:
-        pass
+    # L'ample extra només s'aplica a taules amb poques columnes (fins a 6, incloent
+    # la d'etiquetes): en una taula petita queda més "plena" i estètica, però en
+    # taules amples (p.ex. comparativa amb diversos municipis en paral·lel) sumar-hi
+    # un 15% feia que es sortissin dels marges de la pàgina (detectat 2026-08-14,
+    # pàg. 6 i 35 de l'informe de mercat). Sense aquest ample extra, les taules
+    # amples es queden amb el seu ample natural, que sí que cap.
+    if len(data[0]) <= 6:
+        try:
+            total_width = 1.15  # 15% más ancha
+            tbl._argW = [w * total_width if w else None for w in tbl._argW]
+        except Exception:
+            pass
 
     tbl.setStyle(TableStyle([
         ('BACKGROUND', (0,0), (-1,0), _hex_to_rl(CSS_COLORS["primary"])),
@@ -902,7 +969,7 @@ def _header_footer_minimal(canvas, doc):
 def build_location_pdf_ordered(
     location_name: str,
     kpis: List[Tuple[str, str, Optional[str]]],
-    sections: List[Tuple[str, List[Tuple[str, object]]]],  # [(titulo_seccion, [("table", (titulo, df)) o ("fig", (titulo, png_bytes)) , ...])]
+    sections: List[Tuple[str, List[Tuple[str, object]]]],  # [(titulo_seccion, [("table", (titulo, df)) o ("fig", (titulo, png_bytes)) o ("text", parrafo) o ("pagebreak", None), ...])]
 ) -> bytes:
     buffer = io.BytesIO()
     doc = BaseDocTemplate(
@@ -1157,6 +1224,10 @@ def build_location_pdf_ordered(
 
             elif kind == "pagebreak":
                 story.append(PageBreak())
+
+            elif kind == "text":
+                story.append(Paragraph(payload, styles["Small"]))
+                story.append(Spacer(1, 0.3*cm))
 
         if si < len(sections) - 1:
             story.append(Spacer(1, 0.5*cm))
@@ -2157,7 +2228,21 @@ def generar_pdf_municipi_tot(
         except Exception:
             pass
 
-
+    # "Fitxa de demanda potencial": mòdul independent i autocontingut
+    # (fitxes_demanda_potencial.py), afegit el 2026-08-13. A diferència dels dos
+    # menús, aquest bloc s'executa sempre que es genera un PDF, així que aquí cal
+    # la condició explícita perquè la fitxa no surti a l'informe a producció. Si el
+    # mòdul o les seves dades no hi són, el try/except evita que trenqui el PDF.
+    if SECCIONS_EN_PROVES:
+        try:
+            import fitxes_demanda_potencial as fitxa_dp
+            if fitxa_dp.disponible(selected_mun):
+                items_fitxa = [("table", (titol, df)) for titol, df in fitxa_dp.blocs_dataframes(selected_mun)]
+                if items_fitxa:
+                    items_fitxa.append(("text", fitxa_dp.text_metodologia()))
+                    sections.append(("Fitxa de demanda potencial d'habitatge", items_fitxa))
+        except Exception:
+            pass
 
 
     # ==========================
@@ -2322,13 +2407,15 @@ with st.container(border=True):
         # a diferència del component extern option_menu (un iframe que deixava forats en blanc).
         # L'àncora buida permet que el CSS estilitzi NOMÉS aquest radio (i no els altres).
         st.markdown('<div class="menu-nav-anchor"></div>', unsafe_allow_html=True)
-        # "Viabilitat Financera" oculta a petició de l'usuari (2026-08-13): el bloc
-        # "if selected == 'Viabilitat Financera':" (línia ~6366) queda intacte però
-        # inabastable, ja que ja no hi ha cap manera d'arribar-hi des del menú. Per
-        # reactivar-la, tornar a afegir el string a aquesta llista.
+        # Aquesta llista ÉS el router: el bloc "if selected == 'Viabilitat Financera':"
+        # només és abastable si el text hi consta. Per això n'hi ha prou de no afegir-lo
+        # quan les seccions en proves estan apagades (vegeu SECCIONS_EN_PROVES).
+        _seccions_menu = ["Indicadors Territorials", "Estudi d'Oferta Obra Nova", "Informe de Mercat i Sectorial"]
+        if SECCIONS_EN_PROVES:
+            _seccions_menu.append("Viabilitat Financera")
         selected_top = st.radio(
             "Menú principal",
-            ["Indicadors Territorials", "Estudi d'Oferta Obra Nova", "Informe de Mercat i Sectorial"],
+            _seccions_menu,
             horizontal=True,
             label_visibility="collapsed",
         )
@@ -2470,8 +2557,6 @@ def import_data(trim_limit, month_limit):
     DT_mun_pre2 = pd.merge(DT_mun_pre, DT_mun_aux2, how="left", on=["Trimestre","Fecha"])
     DT_mun_def = pd.merge(DT_mun_pre2, DT_mun_aux3, how="left", on=["Trimestre","Fecha"])
     mun_list_aux = list(map(str, maestro_mun.loc[maestro_mun["ADD"] == "SI", "Municipi"].tolist()))
-    mun_list = ["Trimestre", "Fecha"] + mun_list_aux
-    muns_list = '|'.join(mun_list)
     # El nom del municipi va sempre al final del nom de columna ("iniviv_uni_50m2_Manresa"),
     # per això es compara el SUFIX exacte i no una subcadena: amb "mun in col" 13 municipis
     # ADD=SI que són subcadena d'un altre (Ripoll->Ripollet, Vic->Sant Vicenç de Torelló,
@@ -3163,7 +3248,9 @@ def bar_plotly_demografia(table_n, selection_n, title_main, title_y, year_ini, y
             y=plot_cat[col],
             name=col,
             text=plot_cat[col],
-            textfont=dict(color="white"),
+            # Sense color de text fix: Plotly tria automàticament blanc o negre segons
+            # el color de la barra. Abans estava fixat a blanc i, sobre les barres
+            # clares de la paleta, el contrast era de 2,97:1 (il·legible).
             marker=dict(color=colors[i % len(colors)]),
         )
         traces.append(trace)
@@ -3230,10 +3317,13 @@ def table_monthly(data_ori, year_ini, rounded=True):
 
 def format_dataframes(df, style_n):
     # Format espanyol: milers amb punt i decimals amb coma (style_n=True -> 0 decimals; False -> 1 decimal)
+    # na_rep="—": sense això, pandas escrivia literalment "nan" a les cel·les sense dada
+    # (p.ex. el trimestre en curs, publicat a mitges: les qualificacions d'HPO ja hi són
+    # però els habitatges iniciats/acabats encara no). Afecta totes les taules de l'app.
     if style_n==True:
-        return(df.style.format(thousands=".", decimal=",", precision=0))
+        return(df.style.format(thousands=".", decimal=",", precision=0, na_rep="—"))
     else:
-        return(df.style.format(thousands=".", decimal=",", precision=1))
+        return(df.style.format(thousands=".", decimal=",", precision=1, na_rep="—"))
 
 
 
@@ -3353,14 +3443,17 @@ def folium_mapa_municipis(map_df, any, name_var):
         control_scale=True,
         prefer_canvas=True,
     )
-    folium.TileLayer("CartoDB positron", name="Clar", control=True, show=not dark_mode).add_to(m)
-    folium.TileLayer("CartoDB dark_matter", name="Fosc", control=True, show=dark_mode).add_to(m)
+    folium.TileLayer(TILES_CLAR, attr=TILES_ATRIBUCIO, name="Clar", control=True, show=not dark_mode).add_to(m)
+    folium.TileLayer(TILES_FOSC, attr=TILES_ATRIBUCIO, name="Fosc", control=True, show=dark_mode).add_to(m)
 
     folium.Choropleth(
         geo_data=map_df.__geo_interface__,
         data=map_df,
         columns=["codiine", "valor"],
         key_on="feature.properties.codiine",
+        # Sense name, folium bateja la capa amb el seu id intern i al control de
+        # capes del mapa hi sortia literalment "macro_element_div_2".
+        name=name_var,
         fill_color="YlOrRd",
         fill_opacity=0.78,
         line_opacity=0.25,
@@ -5229,7 +5322,12 @@ if selected=="Comarques":
 if selected=="Municipis":
     left, center, right= st.columns((1,1,1))
     with left:
-        selected_type = st.radio("**Selecciona un tipus d'indicador**", ("Venda", "Lloguer", "Altres indicadors"), key="municipis_tipus_indicador", horizontal=False)
+        # Mateix criteri que al menú principal: la llista és el router, i "Fitxa de
+        # demanda potencial" només hi consta quan les seccions en proves estan enceses.
+        _tipus_indicador = ["Venda", "Lloguer", "Altres indicadors"]
+        if SECCIONS_EN_PROVES:
+            _tipus_indicador.append("Fitxa de demanda potencial")
+        selected_type = st.radio("**Selecciona un tipus d'indicador**", _tipus_indicador, key="municipis_tipus_indicador", horizontal=False)
     with center:
         selected_mun = st.selectbox("**Selecciona un municipi:**", maestro_mun[maestro_mun["ADD"]=="SI"]["Municipi"].unique(), index= maestro_mun[maestro_mun["ADD"]=="SI"]["Municipi"].tolist().index("Barcelona"), key="municipis_selector_municipi")
         if selected_type=="Venda":
@@ -5699,6 +5797,19 @@ if selected=="Municipis":
             _st_metric_pick(sel, "Atur registrat – Total")
             _st_metric_pick(sel, "Població ocupada")
             _st_metric_pick(sel, "Població desocupada")
+
+    # "Fitxa de demanda potencial": mòdul independent i autocontingut
+    # (fitxes_demanda_potencial.py), afegit el 2026-08-13. Si el mòdul o les
+    # seves dades no hi són, aquest bloc no trenca la resta de l'app.
+    if selected_type=="Fitxa de demanda potencial":
+        try:
+            import fitxes_demanda_potencial as fitxa_dp
+            if fitxa_dp.disponible(selected_mun):
+                st.markdown(fitxa_dp.render_html(selected_mun), unsafe_allow_html=True)
+            else:
+                st.info(f"No hi ha ficha de demanda potencial per a {selected_mun} (sense dada real de compravendes d'obra nova).")
+        except Exception:
+            st.info("La ficha de demanda potencial no està disponible ara mateix.")
 if selected=="Districtes de Barcelona":
     left, center, right= st.columns((1,1,1))
     with left:
@@ -6043,7 +6154,7 @@ if selected=="Mapa interactiu":
     st_folium(
         folium_mapa_municipis(map_df, any_mapa, label),
         use_container_width=True,
-        height=720,
+        height=MAPA_ALCADA,
         returned_objects=[],
         key=f"mapa_municipis_{var_prefix}_{any_mapa}",
     )
@@ -6260,7 +6371,13 @@ if selected == "Informe de Mercat i Sectorial":
                         return None
 
                 try:
-                    municipis_propers = _municipis_mes_propers(selected_mun, n=10)
+                    # n=5 (abans 10): amb selected_mun + 10 propers, les taules amples
+                    # de comparativa (_build_comp_df_wide) es sortien dels marges del PDF
+                    # (pàg. 6 i 35, detectat 2026-08-14). Amb n=6 encara quedava un marge
+                    # massa just (<0,5 cm; un nom de municipi llarg com "Castell d'Aro,
+                    # Platja d'Aro i s'Agaró" ja el tornava a fer sortir). Amb 5 propers +
+                    # selected_mun (6 columnes) el marge és còmode (~2 cm) en qualsevol cas.
+                    municipis_propers = _municipis_mes_propers(selected_mun, n=5)
                 except Exception:
                     municipis_propers = [selected_mun]
                 tables_municipis_propers = {selected_mun: (table_mun_prod_y, table_mun_tr_y, table_mun_pr_y, table_mun_llog_y)}
@@ -6367,342 +6484,342 @@ if selected == "Informe de Mercat i Sectorial":
                 unsafe_allow_html=True,
             )
 
-# if selected == "Viabilitat Financera":
-#     st.subheader("VIABILITAT FINANCERA")
-#     st.markdown(
-#         '<div class="viab-toc">'
-#         '<a href="#viab-inputs">Dades d\'entrada</a>'
-#         '<a href="#viab-estatic">Anàlisi estàtic</a>'
-#         '<a href="#viab-dinamic">Anàlisi dinàmic</a>'
-#         '<a href="#viab-resum">Resum de resultats</a>'
-#         '</div>',
-#         unsafe_allow_html=True,
-#     )
-#     st.markdown('<div id="viab-inputs" class="viab-anchor"></div>', unsafe_allow_html=True)
-#
-#     left, center, right = st.columns((1, 1, 1))
-#     with left:
-#         viab_mun = st.selectbox(
-#             "**Municipi del solar:**",
-#             maestro_mun[maestro_mun["ADD"] == "SI"]["Municipi"].unique(),
-#             index=maestro_mun[maestro_mun["ADD"] == "SI"]["Municipi"].tolist().index("Barcelona"),
-#             key="viab_mun",
-#         )
-#     with center:
-#         viab_superficie = _viab_number_input("**Superfície construïda (m²):**", "viab_superficie", default=3000.0, min_value=0.0, decimals=0)
-#     with right:
-#         viab_data_inici = st.date_input("**Data d'inici de l'operació:**", value=datetime.now(), key="viab_data_inici")
-#
-#     # Dades de mercat ja carregades a l'app (Euríbor, BEC, preu m² per municipi):
-#     # s'usen com a valor per defecte, editable, en comptes que l'usuari les busqui a mà.
-#     _euribor_ma12 = DT_monthly[["Fecha", "Euribor_1y"]].dropna().set_index("Fecha")["Euribor_1y"].rolling(window=12).mean().dropna()
-#     _viab_tipo_interes_default = round(float(_euribor_ma12.iloc[-1]) + 1, 2) if not _euribor_ma12.empty else 3.0
-#
-#     _bec_ma4 = DT_terr[["Fecha", "Costos_edificimitjaneres"]].dropna().set_index("Fecha")["Costos_edificimitjaneres"].rolling(window=4).mean().dropna()
-#     _viab_costem2_default = round(float(_bec_ma4.iloc[-1]), 1) if not _bec_ma4.empty else 1000.0
-#
-#     # Preu de venda per m²: font única l'Estudi d'Oferta d'obra nova (Atlas), mateixa
-#     # font que la resta de l'app (veure _carrega_estudi_oferta_atlas). Es descarta el
-#     # valor orientatiu si l'oferta d'obra nova al municipi és massa reduïda per ser fiable.
-#     _viab_df_est = _carrega_estudi_oferta_atlas()
-#     _viab_atlas_preu, _viab_atlas_unitats, _viab_atlas_any = _viab_atlas_preu_oferta(viab_mun, _viab_df_est)
-#     _viab_preu_fiable = _viab_atlas_preu is not None and _viab_atlas_unitats >= VIAB_MIN_UNITATS_OFERTA
-#     _viab_preciom2_default = int(round(_viab_atlas_preu, 0)) if _viab_preu_fiable else None
-#
-#     left, center, right = st.columns((1, 1, 1))
-#     with left:
-#         viab_tipo_interes = _viab_number_input("**Tipus d'interès (%)** — Euríbor 1 any (mitjana 12m) + 1%", "viab_tipo_interes", default=_viab_tipo_interes_default, min_value=0.0, decimals=2)
-#     with center:
-#         viab_costem2 = _viab_number_input("**Cost mitjà del m² construït (BEC)**", "viab_costem2", default=_viab_costem2_default, min_value=0.0, decimals=2)
-#     with right:
-#         viab_preciom2 = _viab_number_input(
-#             f"**Preu de venda per m² a {viab_mun}**", f"viab_preciom2_{viab_mun}", default=_viab_preciom2_default,
-#             min_value=0.0, decimals=0, placeholder=None if _viab_preu_fiable else "Introdueix el preu manualment",
-#         )
-#         if _viab_preu_fiable:
-#             st.caption(f"{_viab_atlas_unitats} habitatges nous en oferta (font: Estudi d'Oferta d'obra nova APCE, informe 1S{_viab_atlas_any}).")
-#         else:
-#             st.caption(f"Avís: només {_viab_atlas_unitats} habitatges nous en oferta al municipi (mínim {VIAB_MIN_UNITATS_OFERTA} per a un preu orientatiu fiable). Introdueix el preu manualment.")
-#
-#     viab_metode = st.radio("**Mètode de càlcul del sòl:**", ("Fixar rendibilitat abans d'impostos i interessos", "Fixar preu del sòl"), horizontal=True, key="viab_metode")
-#     if viab_metode == "Fixar rendibilitat abans d'impostos i interessos":
-#         viab_preu_solar_manual = None
-#         with st.columns(3)[0]:
-#             viab_rendibilitat = st.slider("**Rendibilitat objectiu (%)**", 0, 50, value=10, key="viab_rendibilitat")
-#     else:
-#         viab_rendibilitat = None
-#         with st.columns(3)[0]:
-#             viab_preu_solar_manual = _viab_number_input(
-#                 "**Cost del sòl (€)**", f"viab_preu_solar_manual_{viab_mun}", default=None,
-#                 min_value=0.0, decimals=0, placeholder="Introdueix el preu del sòl",
-#             )
-#     _viab_solar_missing = viab_metode == "Fixar preu del sòl" and not viab_preu_solar_manual
-#     if _viab_solar_missing:
-#         st.warning("Introdueix el cost del sòl (€) per calcular l'anàlisi de viabilitat.")
-#
-#     quarters = [_viab_add_quarters(viab_data_inici, i) for i in range(VIAB_MAX_TRIM)]
-#     st.markdown(f'<div class="custom-box">Trimestre d\'inici: {quarters[0]}</div>', unsafe_allow_html=True)
-#
-#     with st.expander("Corbes d'evolució trimestral (% per trimestre, editable)"):
-#         st.caption("Cada fila reparteix el 100% d'un concepte (construcció, vendes, sòl...) entre els trimestres de la promoció. Els percentatges de cada fila haurien de sumar 100; si no hi sumen, es reescalen automàticament de manera proporcional.")
-#         _viab_curves_pct = (_viab_default_curves(quarters) * 100).round(1)
-#         _viab_curves_edited = st.data_editor(_viab_curves_pct, key="viab_curves_editor")
-#         curves = _viab_curves_edited / 100
-#         row_sums = curves.sum(axis=1).replace(0, 1)
-#         curves = curves.div(row_sums, axis=0)  # normalitza per si l'usuari desquadra una fila
-#
-#     with st.expander("Hipòtesis i percentatges (editable)"):
-#         h1, h2, h3 = st.columns(3)
-#         with h1:
-#             viab_recursos_propis_pct = _viab_number_input(
-#                 "**Recursos propis (%)**", "viab_recursos_propis_pct", default=VIAB_RECURSOS_PROPIS_PCT * 100,
-#                 min_value=0.0, decimals=1, help="Sobre els ingressos per vendes. La resta (100% − aquest valor) es finança amb crèdit.",
-#             )
-#             viab_honoraris_pct = _viab_number_input("**Honoraris tècnics (%)**", "viab_honoraris_pct", default=VIAB_HONORARIS_PCT * 100, min_value=0.0, decimals=1, help="Sobre el cost d'edificació (BEC).")
-#             viab_admin_promocio_pct = _viab_number_input("**Administració de la promoció (%)**", "viab_admin_promocio_pct", default=VIAB_ADMIN_PROMOCIO_PCT * 100, min_value=0.0, decimals=1, help="Sobre el cost d'edificació (BEC).")
-#             viab_iva_solar_pct = _viab_number_input("**IVA solar (%)**", "viab_iva_solar_pct", default=VIAB_IVA_SOLAR_PCT * 100, min_value=0.0, decimals=1, help="Sobre el preu del sòl.")
-#         with h2:
-#             viab_otros_solar_pct = _viab_number_input("**Altres costos del sòl (%)**", "viab_otros_solar_pct", default=VIAB_OTROS_SOLAR_PCT * 100, min_value=0.0, decimals=1, help="Sobre el preu del sòl. Notaria, registre, impostos de la transmissió...")
-#             viab_llicencies_pct = _viab_number_input("**Llicències (%)**", "viab_llicencies_pct", default=VIAB_LLICENCIES_PCT * 100, min_value=0.0, decimals=1, help="Sobre el cost d'edificació (BEC).")
-#             viab_comercialitzacio_pct = _viab_number_input("**Comercialització (%)**", "viab_comercialitzacio_pct", default=VIAB_COMERCIALITZACIO_PCT * 100, min_value=0.0, decimals=1, help="Sobre els ingressos per vendes.")
-#             viab_iva_edificacio_pct = _viab_number_input("**IVA edificació (%)**", "viab_iva_edificacio_pct", default=VIAB_IVA_EDIFICACIO_PCT * 100, min_value=0.0, decimals=1, help="Sobre el cost d'edificació (BEC).")
-#         with h3:
-#             viab_gastos_legals_pct = _viab_number_input("**Despeses legals (%)**", "viab_gastos_legals_pct", default=VIAB_GASTOS_LEGALS_PCT * 100, min_value=0.0, decimals=1, help="Sobre el cost d'edificació (BEC).")
-#             viab_altres_edif_pct = _viab_number_input("**Altres costos edificació (%)**", "viab_altres_edif_pct", default=VIAB_ALTRES_EDIF_PCT * 100, min_value=0.0, decimals=1, help="Sobre el cost d'edificació (BEC).")
-#             viab_gastos_constitucio_pct = _viab_number_input("**Despeses de constitució del crèdit (%)**", "viab_gastos_constitucio_pct", default=VIAB_GASTOS_CONSTITUCIO_PCT * 100, min_value=0.0, decimals=1, help="Sobre l'import del crèdit concedit.")
-#         viab_credit_pct = 100.0 - viab_recursos_propis_pct
-#         st.caption(f"Crèdit: {viab_credit_pct:.1f}% (derivat de 100% − recursos propis).")
-#
-#     if not _viab_solar_missing:
-#         _viab_mode = "rentabilitat" if viab_metode == "Fixar rendibilitat abans d'impostos i interessos" else "preu_solar"
-#         _viab_pct_kwargs = dict(
-#             recursos_propis_pct=viab_recursos_propis_pct / 100, credit_pct=viab_credit_pct / 100,
-#             otros_solar_pct=viab_otros_solar_pct / 100, honoraris_pct=viab_honoraris_pct / 100,
-#             llicencies_pct=viab_llicencies_pct / 100, gastos_legals_pct=viab_gastos_legals_pct / 100,
-#             altres_edif_pct=viab_altres_edif_pct / 100, admin_promocio_pct=viab_admin_promocio_pct / 100,
-#             comercialitzacio_pct=viab_comercialitzacio_pct / 100, gastos_constitucio_pct=viab_gastos_constitucio_pct / 100,
-#         )
-#         estatic_pre = _viab_calcul_estatic(
-#             _viab_mode, viab_superficie, viab_preciom2, viab_costem2, viab_tipo_interes,
-#             rentabilidad_pct=viab_rendibilitat, preu_solar_manual=viab_preu_solar_manual, intereses_hipoteca=0.0,
-#             **_viab_pct_kwargs,
-#         )
-#         dinamic_df, total_intereses = _viab_calcul_dinamic(
-#             estatic_pre, curves, quarters, viab_tipo_interes,
-#             iva_solar_pct=viab_iva_solar_pct / 100, iva_edificacio_pct=viab_iva_edificacio_pct / 100,
-#             credit_pct=viab_credit_pct / 100,
-#         )
-#         estatic = _viab_calcul_estatic(
-#             _viab_mode, viab_superficie, viab_preciom2, viab_costem2, viab_tipo_interes,
-#             rentabilidad_pct=viab_rendibilitat, preu_solar_manual=viab_preu_solar_manual, intereses_hipoteca=total_intereses,
-#             **_viab_pct_kwargs,
-#         )
-#
-#         if estatic["solar1"] < 0:
-#             st.error("El cost del sòl surt negatiu amb la rendibilitat objectiu triada. Redueix el percentatge de rendibilitat.")
-#
-#         st.markdown("")
-#         st.markdown('<div id="viab-estatic" class="viab-anchor"></div>', unsafe_allow_html=True)
-#         st.subheader("ANÀLISI ESTÀTIC — COMPTE DE RESULTATS")
-#         left, right = st.columns((1, 1))
-#         with left:
-#             st.markdown("**DESPESES**")
-#             st_metric(label="Sòl (+ altres costos del sòl)", value=f"{estatic['total_solar']:,.0f} €")
-#             st_metric(label="Edificació (+ honoraris, llicències, despeses legals, altres)", value=f"{estatic['total_edificacion']:,.0f} €")
-#             st_metric(label="Administració de la promoció", value=f"{estatic['admin1']:,.0f} €")
-#             st_metric(label="Comercialització", value=f"{estatic['admin2']:,.0f} €")
-#             st_metric(label="**TOTAL DESPESES**", value=f"{estatic['total_gastos']:,.0f} €")
-#         with right:
-#             st.markdown("**INGRESSOS I RESULTAT**")
-#             st_metric(label="Ingressos per vendes", value=f"{estatic['ingresos']:,.0f} €")
-#             st_metric(label="**BAII** (abans d'impostos i interessos)", value=f"{estatic['baii']:,.0f} €")
-#             st_metric(label="Interessos hipoteca", value=f"{total_intereses:,.0f} €")
-#             st_metric(label="Despeses de constitució", value=f"{estatic['gastos_constitucio']:,.0f} €")
-#             st_metric(label="**BAI** (abans d'impostos)", value=f"{estatic['bai']:,.0f} €")
-#
-#         st.markdown("")
-#         st.markdown('<div id="viab-dinamic" class="viab-anchor"></div>', unsafe_allow_html=True)
-#         st.subheader("ANÀLISI DINÀMIC — CASH FLOWS TRIMESTRALS")
-#         dinamic_display = dinamic_df.copy()
-#         dinamic_display["TOTAL"] = dinamic_display.sum(axis=1)
-#         st.markdown(taula_html_es(dinamic_display.round(0), precision=0), unsafe_allow_html=True)
-#         st.markdown(filedownload(dinamic_display, "Viabilitat_cashflows.xlsx"), unsafe_allow_html=True)
-#
-#         left, right = st.columns((1, 1))
-#         with left:
-#             _viab_fig1 = go.Figure()
-#             _viab_fig1.add_trace(go.Bar(x=quarters, y=dinamic_df.loc["CASH FLOW ABANS DE FINANÇAMENT", quarters], name="Abans de finançament", marker=dict(color=PLOTLY_PALETTE[0])))
-#             _viab_fig1.add_trace(go.Scatter(x=quarters, y=dinamic_df.loc["CASH FLOW ABANS DE FINANÇAMENT ACUM", quarters], name="Acumulat", mode="lines+markers", line=dict(color=PLOTLY_PALETTE[1])))
-#             _viab_fig1.update_layout(_plotly_layout("Cash flow abans de finançament", "€", title_x="Trimestre"))
-#             st_plotly_chart(_viab_fig1, use_container_width=True, responsive=True)
-#         with right:
-#             _viab_fig2 = go.Figure()
-#             _viab_fig2.add_trace(go.Bar(x=quarters, y=dinamic_df.loc["CASH FLOW DESPRÉS DE FINANÇAMENT", quarters], name="Després de finançament", marker=dict(color=PLOTLY_PALETTE[0])))
-#             _viab_fig2.add_trace(go.Scatter(x=quarters, y=dinamic_df.loc["CASH FLOW DESPRÉS DE FINANÇAMENT ACUM", quarters], name="Acumulat", mode="lines+markers", line=dict(color=PLOTLY_PALETTE[1])))
-#             _viab_fig2.update_layout(_plotly_layout("Cash flow després de finançament", "€", title_x="Trimestre"))
-#             st_plotly_chart(_viab_fig2, use_container_width=True, responsive=True)
-#
-#         st.markdown("")
-#         st.markdown('<div id="viab-resum" class="viab-anchor"></div>', unsafe_allow_html=True)
-#         st.subheader("RESUM DE RESULTATS")
-#         _viab_cf_despues = dinamic_df.loc["CASH FLOW DESPRÉS DE FINANÇAMENT", quarters]
-#         _viab_cf_despues_acum = dinamic_df.loc["CASH FLOW DESPRÉS DE FINANÇAMENT ACUM", quarters]
-#         _viab_tir = _viab_calcula_tir(_viab_cf_despues.values)
-#         _viab_payback = _viab_calcula_payback(_viab_cf_despues_acum)
-#         _viab_roe = (estatic["bai"] / estatic["recursos_propis"]) * 100 if estatic["recursos_propis"] else np.nan
-#         _viab_roi = (estatic["baii"] / estatic["total_gastos"]) * 100 if estatic["total_gastos"] else np.nan
-#
-#         left, center, right = st.columns((1, 1, 1))
-#         with left:
-#             st_metric(label="**BAI**", value=f"{estatic['bai']:,.0f} €")
-#             st_metric(label="**ROE** (retorn recursos propis)", value=f"{_viab_roe:.1f}%" if pd.notna(_viab_roe) else "No disponible")
-#         with center:
-#             st_metric(label="**ROI** (retorn de la inversió)", value=f"{_viab_roi:.1f}%" if pd.notna(_viab_roi) else "No disponible")
-#             st_metric(label="**TIR** anualitzada", value=f"{_viab_tir:.1f}%" if pd.notna(_viab_tir) else "No disponible")
-#         with right:
-#             st_metric(label="**Payback**", value=str(_viab_payback) if _viab_payback else "No s'assoleix en el període")
-#
-#         _viab_inputs_df = pd.DataFrame({
-#             "Camp": [
-#                 "Municipi del solar", "Superfície construïda (m²)", "Data d'inici de l'operació",
-#                 "Tipus d'interès (%)", "Cost mitjà del m² construït - BEC (€)", f"Preu de venda per m² ({viab_mun}) (€)",
-#                 "Mètode de càlcul del sòl", "Rendibilitat objectiu (%)", "Cost del sòl fixat manualment (€)",
-#             ],
-#             "Valor": [
-#                 viab_mun, viab_superficie, str(viab_data_inici),
-#                 viab_tipo_interes, viab_costem2, viab_preciom2,
-#                 viab_metode, viab_rendibilitat, viab_preu_solar_manual,
-#             ],
-#         })
-#         _viab_hipotesis_df = pd.DataFrame({
-#             "Hipòtesi": [
-#                 "Recursos propis (%)", "Crèdit (%)", "Honoraris tècnics (%)", "Administració de la promoció (%)",
-#                 "IVA solar (%)", "Altres costos del sòl (%)", "Llicències (%)", "Comercialització (%)",
-#                 "IVA edificació (%)", "Despeses legals (%)", "Altres costos edificació (%)",
-#                 "Despeses de constitució del crèdit (%)",
-#             ],
-#             "Valor (%)": [
-#                 viab_recursos_propis_pct, viab_credit_pct, viab_honoraris_pct, viab_admin_promocio_pct,
-#                 viab_iva_solar_pct, viab_otros_solar_pct, viab_llicencies_pct, viab_comercialitzacio_pct,
-#                 viab_iva_edificacio_pct, viab_gastos_legals_pct, viab_altres_edif_pct, viab_gastos_constitucio_pct,
-#             ],
-#         })
-#         _viab_estatic_df = pd.DataFrame({
-#             "Concepte": [
-#                 "Sòl (+ altres costos del sòl)", "Edificació (+ honoraris, llicències, despeses legals, altres)",
-#                 "Administració de la promoció", "Comercialització", "TOTAL DESPESES",
-#                 "Ingressos per vendes", "BAII (abans d'impostos i interessos)", "Interessos hipoteca",
-#                 "Despeses de constitució", "BAI (abans d'impostos)",
-#             ],
-#             "Import (€)": [
-#                 estatic["total_solar"], estatic["total_edificacion"], estatic["admin1"], estatic["admin2"], estatic["total_gastos"],
-#                 estatic["ingresos"], estatic["baii"], total_intereses, estatic["gastos_constitucio"], estatic["bai"],
-#             ],
-#         })
-#         _viab_resum_df = pd.DataFrame({
-#             "Indicador": ["BAI (€)", "ROE - retorn recursos propis (%)", "ROI - retorn de la inversió (%)", "TIR anualitzada (%)", "Payback"],
-#             "Valor": [estatic["bai"], _viab_roe, _viab_roi, _viab_tir, str(_viab_payback) if _viab_payback else "No s'assoleix en el període"],
-#         })
-#
-#         def _viab_build_resum_excel():
-#             from openpyxl.styles import Font, PatternFill, Alignment
-#             from openpyxl.utils import get_column_letter
-#
-#             BRAND_FILL = PatternFill(start_color="C1571E", end_color="C1571E", fill_type="solid")
-#             BRAND_FONT = Font(color="FFFFFF", bold=True)
-#             TOTAL_FILL = PatternFill(start_color="E3A94C", end_color="E3A94C", fill_type="solid")
-#
-#             def _style_header(ws):
-#                 for cell in ws[1]:
-#                     cell.fill = BRAND_FILL
-#                     cell.font = BRAND_FONT
-#                     cell.alignment = Alignment(horizontal="center", vertical="center")
-#
-#             def _autofit(ws):
-#                 for col_idx in range(1, ws.max_column + 1):
-#                     letter = get_column_letter(col_idx)
-#                     max_len = max((len(str(ws.cell(r, col_idx).value)) for r in range(1, ws.max_row + 1) if ws.cell(r, col_idx).value is not None), default=8)
-#                     ws.column_dimensions[letter].width = min(max(max_len + 2, 10), 40)
-#
-#             def _format_label_value(ws):
-#                 # Els valors barregen text, €, % i m² dins la mateixa columna "Valor": el format
-#                 # es decideix mirant la unitat entre parèntesis de l'etiqueta de cada fila.
-#                 for label_cell, value_cell in ws.iter_rows(min_row=2, min_col=1, max_col=2):
-#                     if not isinstance(value_cell.value, (int, float)):
-#                         continue
-#                     label = str(label_cell.value or "")
-#                     if "(%)" in label:
-#                         value_cell.number_format = '0.0"%"'
-#                     elif "(€)" in label:
-#                         value_cell.number_format = '#,##0 €'
-#                     elif "(m²)" in label:
-#                         value_cell.number_format = '#,##0" m²"'
-#
-#             def _format_block(ws, fmt, min_row=2, min_col=1):
-#                 for row in ws.iter_rows(min_row=min_row, min_col=min_col):
-#                     for cell in row:
-#                         if isinstance(cell.value, (int, float)):
-#                             cell.number_format = fmt
-#
-#             def _highlight_total_column(ws):
-#                 total_col = next((c.column for c in ws[1] if c.value == "TOTAL"), None)
-#                 if total_col is None:
-#                     return
-#                 for row in ws.iter_rows(min_row=2, min_col=total_col, max_col=total_col):
-#                     for cell in row:
-#                         cell.font = Font(bold=True)
-#                         cell.fill = TOTAL_FILL
-#
-#             towrite = io.BytesIO()
-#             with pd.ExcelWriter(towrite, engine="openpyxl") as writer:
-#                 _viab_resum_df.to_excel(writer, sheet_name="Resum de resultats", index=False, header=True)
-#                 _viab_inputs_df.to_excel(writer, sheet_name="Dades d'entrada", index=False, header=True)
-#                 _viab_hipotesis_df.to_excel(writer, sheet_name="Hipòtesis (%)", index=False, header=True)
-#                 _viab_curves_edited.to_excel(writer, sheet_name="Corbes trimestrals (%)", index=True, header=True)
-#                 _viab_estatic_df.to_excel(writer, sheet_name="Anàlisi estàtic", index=False, header=True)
-#                 dinamic_display.to_excel(writer, sheet_name="Anàlisi dinàmic", index=True, header=True)
-#
-#                 ws_resum = writer.sheets["Resum de resultats"]
-#                 _style_header(ws_resum)
-#                 _format_label_value(ws_resum)
-#                 ws_resum.freeze_panes = "A2"
-#
-#                 ws_inputs = writer.sheets["Dades d'entrada"]
-#                 _style_header(ws_inputs)
-#                 _format_label_value(ws_inputs)
-#                 ws_inputs.freeze_panes = "A2"
-#
-#                 ws_hip = writer.sheets["Hipòtesis (%)"]
-#                 _style_header(ws_hip)
-#                 _format_block(ws_hip, '0.0"%"', min_col=2)
-#                 ws_hip.freeze_panes = "A2"
-#
-#                 ws_curves = writer.sheets["Corbes trimestrals (%)"]
-#                 _style_header(ws_curves)
-#                 _format_block(ws_curves, '0.0"%"', min_col=2)
-#                 ws_curves.freeze_panes = "B2"
-#
-#                 ws_estatic = writer.sheets["Anàlisi estàtic"]
-#                 _style_header(ws_estatic)
-#                 _format_block(ws_estatic, '#,##0 €', min_col=2)
-#                 ws_estatic.freeze_panes = "A2"
-#
-#                 ws_dinamic = writer.sheets["Anàlisi dinàmic"]
-#                 _style_header(ws_dinamic)
-#                 _format_block(ws_dinamic, '#,##0 €', min_col=2)
-#                 _highlight_total_column(ws_dinamic)
-#                 ws_dinamic.freeze_panes = "B2"
-#
-#                 for ws in (ws_resum, ws_inputs, ws_hip, ws_curves, ws_estatic, ws_dinamic):
-#                     _autofit(ws)
-#
-#             towrite.seek(0)
-#             b64 = base64.b64encode(towrite.read()).decode("latin-1")
-#             return f'''<a href="data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,{b64}" download="Viabilitat_resum_complet.xlsx">
-#             <button class="download-button">Descarregar Resultats</button></a>'''
-#
-#         st.markdown("")
-#         st.markdown(_viab_build_resum_excel(), unsafe_allow_html=True)
+if selected == "Viabilitat Financera":
+    st.subheader("VIABILITAT FINANCERA")
+    st.markdown(
+        '<div class="viab-toc">'
+        '<a href="#viab-inputs">Dades d\'entrada</a>'
+        '<a href="#viab-estatic">Anàlisi estàtic</a>'
+        '<a href="#viab-dinamic">Anàlisi dinàmic</a>'
+        '<a href="#viab-resum">Resum de resultats</a>'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+    st.markdown('<div id="viab-inputs" class="viab-anchor"></div>', unsafe_allow_html=True)
+
+    left, center, right = st.columns((1, 1, 1))
+    with left:
+        viab_mun = st.selectbox(
+            "**Municipi del solar:**",
+            maestro_mun[maestro_mun["ADD"] == "SI"]["Municipi"].unique(),
+            index=maestro_mun[maestro_mun["ADD"] == "SI"]["Municipi"].tolist().index("Barcelona"),
+            key="viab_mun",
+        )
+    with center:
+        viab_superficie = _viab_number_input("**Superfície construïda (m²):**", "viab_superficie", default=3000.0, min_value=0.0, decimals=0)
+    with right:
+        viab_data_inici = st.date_input("**Data d'inici de l'operació:**", value=datetime.now(), key="viab_data_inici")
+
+    # Dades de mercat ja carregades a l'app (Euríbor, BEC, preu m² per municipi):
+    # s'usen com a valor per defecte, editable, en comptes que l'usuari les busqui a mà.
+    _euribor_ma12 = DT_monthly[["Fecha", "Euribor_1y"]].dropna().set_index("Fecha")["Euribor_1y"].rolling(window=12).mean().dropna()
+    _viab_tipo_interes_default = round(float(_euribor_ma12.iloc[-1]) + 1, 2) if not _euribor_ma12.empty else 3.0
+
+    _bec_ma4 = DT_terr[["Fecha", "Costos_edificimitjaneres"]].dropna().set_index("Fecha")["Costos_edificimitjaneres"].rolling(window=4).mean().dropna()
+    _viab_costem2_default = round(float(_bec_ma4.iloc[-1]), 1) if not _bec_ma4.empty else 1000.0
+
+    # Preu de venda per m²: font única l'Estudi d'Oferta d'obra nova (Atlas), mateixa
+    # font que la resta de l'app (veure _carrega_estudi_oferta_atlas). Es descarta el
+    # valor orientatiu si l'oferta d'obra nova al municipi és massa reduïda per ser fiable.
+    _viab_df_est = _carrega_estudi_oferta_atlas()
+    _viab_atlas_preu, _viab_atlas_unitats, _viab_atlas_any = _viab_atlas_preu_oferta(viab_mun, _viab_df_est)
+    _viab_preu_fiable = _viab_atlas_preu is not None and _viab_atlas_unitats >= VIAB_MIN_UNITATS_OFERTA
+    _viab_preciom2_default = int(round(_viab_atlas_preu, 0)) if _viab_preu_fiable else None
+
+    left, center, right = st.columns((1, 1, 1))
+    with left:
+        viab_tipo_interes = _viab_number_input("**Tipus d'interès (%)** — Euríbor 1 any (mitjana 12m) + 1%", "viab_tipo_interes", default=_viab_tipo_interes_default, min_value=0.0, decimals=2)
+    with center:
+        viab_costem2 = _viab_number_input("**Cost mitjà del m² construït (BEC)**", "viab_costem2", default=_viab_costem2_default, min_value=0.0, decimals=2)
+    with right:
+        viab_preciom2 = _viab_number_input(
+            f"**Preu de venda per m² a {viab_mun}**", f"viab_preciom2_{viab_mun}", default=_viab_preciom2_default,
+            min_value=0.0, decimals=0, placeholder=None if _viab_preu_fiable else "Introdueix el preu manualment",
+        )
+        if _viab_preu_fiable:
+            st.caption(f"{_viab_atlas_unitats} habitatges nous en oferta (font: Estudi d'Oferta d'obra nova APCE, informe 1S{_viab_atlas_any}).")
+        else:
+            st.caption(f"Avís: només {_viab_atlas_unitats} habitatges nous en oferta al municipi (mínim {VIAB_MIN_UNITATS_OFERTA} per a un preu orientatiu fiable). Introdueix el preu manualment.")
+
+    viab_metode = st.radio("**Mètode de càlcul del sòl:**", ("Fixar rendibilitat abans d'impostos i interessos", "Fixar preu del sòl"), horizontal=True, key="viab_metode")
+    if viab_metode == "Fixar rendibilitat abans d'impostos i interessos":
+        viab_preu_solar_manual = None
+        with st.columns(3)[0]:
+            viab_rendibilitat = st.slider("**Rendibilitat objectiu (%)**", 0, 50, value=10, key="viab_rendibilitat")
+    else:
+        viab_rendibilitat = None
+        with st.columns(3)[0]:
+            viab_preu_solar_manual = _viab_number_input(
+                "**Cost del sòl (€)**", f"viab_preu_solar_manual_{viab_mun}", default=None,
+                min_value=0.0, decimals=0, placeholder="Introdueix el preu del sòl",
+            )
+    _viab_solar_missing = viab_metode == "Fixar preu del sòl" and not viab_preu_solar_manual
+    if _viab_solar_missing:
+        st.warning("Introdueix el cost del sòl (€) per calcular l'anàlisi de viabilitat.")
+
+    quarters = [_viab_add_quarters(viab_data_inici, i) for i in range(VIAB_MAX_TRIM)]
+    st.markdown(f'<div class="custom-box">Trimestre d\'inici: {quarters[0]}</div>', unsafe_allow_html=True)
+
+    with st.expander("Corbes d'evolució trimestral (% per trimestre, editable)"):
+        st.caption("Cada fila reparteix el 100% d'un concepte (construcció, vendes, sòl...) entre els trimestres de la promoció. Els percentatges de cada fila haurien de sumar 100; si no hi sumen, es reescalen automàticament de manera proporcional.")
+        _viab_curves_pct = (_viab_default_curves(quarters) * 100).round(1)
+        _viab_curves_edited = st.data_editor(_viab_curves_pct, key="viab_curves_editor")
+        curves = _viab_curves_edited / 100
+        row_sums = curves.sum(axis=1).replace(0, 1)
+        curves = curves.div(row_sums, axis=0)  # normalitza per si l'usuari desquadra una fila
+
+    with st.expander("Hipòtesis i percentatges (editable)"):
+        h1, h2, h3 = st.columns(3)
+        with h1:
+            viab_recursos_propis_pct = _viab_number_input(
+                "**Recursos propis (%)**", "viab_recursos_propis_pct", default=VIAB_RECURSOS_PROPIS_PCT * 100,
+                min_value=0.0, decimals=1, help="Sobre els ingressos per vendes. La resta (100% − aquest valor) es finança amb crèdit.",
+            )
+            viab_honoraris_pct = _viab_number_input("**Honoraris tècnics (%)**", "viab_honoraris_pct", default=VIAB_HONORARIS_PCT * 100, min_value=0.0, decimals=1, help="Sobre el cost d'edificació (BEC).")
+            viab_admin_promocio_pct = _viab_number_input("**Administració de la promoció (%)**", "viab_admin_promocio_pct", default=VIAB_ADMIN_PROMOCIO_PCT * 100, min_value=0.0, decimals=1, help="Sobre el cost d'edificació (BEC).")
+            viab_iva_solar_pct = _viab_number_input("**IVA solar (%)**", "viab_iva_solar_pct", default=VIAB_IVA_SOLAR_PCT * 100, min_value=0.0, decimals=1, help="Sobre el preu del sòl.")
+        with h2:
+            viab_otros_solar_pct = _viab_number_input("**Altres costos del sòl (%)**", "viab_otros_solar_pct", default=VIAB_OTROS_SOLAR_PCT * 100, min_value=0.0, decimals=1, help="Sobre el preu del sòl. Notaria, registre, impostos de la transmissió...")
+            viab_llicencies_pct = _viab_number_input("**Llicències (%)**", "viab_llicencies_pct", default=VIAB_LLICENCIES_PCT * 100, min_value=0.0, decimals=1, help="Sobre el cost d'edificació (BEC).")
+            viab_comercialitzacio_pct = _viab_number_input("**Comercialització (%)**", "viab_comercialitzacio_pct", default=VIAB_COMERCIALITZACIO_PCT * 100, min_value=0.0, decimals=1, help="Sobre els ingressos per vendes.")
+            viab_iva_edificacio_pct = _viab_number_input("**IVA edificació (%)**", "viab_iva_edificacio_pct", default=VIAB_IVA_EDIFICACIO_PCT * 100, min_value=0.0, decimals=1, help="Sobre el cost d'edificació (BEC).")
+        with h3:
+            viab_gastos_legals_pct = _viab_number_input("**Despeses legals (%)**", "viab_gastos_legals_pct", default=VIAB_GASTOS_LEGALS_PCT * 100, min_value=0.0, decimals=1, help="Sobre el cost d'edificació (BEC).")
+            viab_altres_edif_pct = _viab_number_input("**Altres costos edificació (%)**", "viab_altres_edif_pct", default=VIAB_ALTRES_EDIF_PCT * 100, min_value=0.0, decimals=1, help="Sobre el cost d'edificació (BEC).")
+            viab_gastos_constitucio_pct = _viab_number_input("**Despeses de constitució del crèdit (%)**", "viab_gastos_constitucio_pct", default=VIAB_GASTOS_CONSTITUCIO_PCT * 100, min_value=0.0, decimals=1, help="Sobre l'import del crèdit concedit.")
+        viab_credit_pct = 100.0 - viab_recursos_propis_pct
+        st.caption(f"Crèdit: {viab_credit_pct:.1f}% (derivat de 100% − recursos propis).")
+
+    if not _viab_solar_missing:
+        _viab_mode = "rentabilitat" if viab_metode == "Fixar rendibilitat abans d'impostos i interessos" else "preu_solar"
+        _viab_pct_kwargs = dict(
+            recursos_propis_pct=viab_recursos_propis_pct / 100, credit_pct=viab_credit_pct / 100,
+            otros_solar_pct=viab_otros_solar_pct / 100, honoraris_pct=viab_honoraris_pct / 100,
+            llicencies_pct=viab_llicencies_pct / 100, gastos_legals_pct=viab_gastos_legals_pct / 100,
+            altres_edif_pct=viab_altres_edif_pct / 100, admin_promocio_pct=viab_admin_promocio_pct / 100,
+            comercialitzacio_pct=viab_comercialitzacio_pct / 100, gastos_constitucio_pct=viab_gastos_constitucio_pct / 100,
+        )
+        estatic_pre = _viab_calcul_estatic(
+            _viab_mode, viab_superficie, viab_preciom2, viab_costem2, viab_tipo_interes,
+            rentabilidad_pct=viab_rendibilitat, preu_solar_manual=viab_preu_solar_manual, intereses_hipoteca=0.0,
+            **_viab_pct_kwargs,
+        )
+        dinamic_df, total_intereses = _viab_calcul_dinamic(
+            estatic_pre, curves, quarters, viab_tipo_interes,
+            iva_solar_pct=viab_iva_solar_pct / 100, iva_edificacio_pct=viab_iva_edificacio_pct / 100,
+            credit_pct=viab_credit_pct / 100,
+        )
+        estatic = _viab_calcul_estatic(
+            _viab_mode, viab_superficie, viab_preciom2, viab_costem2, viab_tipo_interes,
+            rentabilidad_pct=viab_rendibilitat, preu_solar_manual=viab_preu_solar_manual, intereses_hipoteca=total_intereses,
+            **_viab_pct_kwargs,
+        )
+
+        if estatic["solar1"] < 0:
+            st.error("El cost del sòl surt negatiu amb la rendibilitat objectiu triada. Redueix el percentatge de rendibilitat.")
+
+        st.markdown("")
+        st.markdown('<div id="viab-estatic" class="viab-anchor"></div>', unsafe_allow_html=True)
+        st.subheader("ANÀLISI ESTÀTIC — COMPTE DE RESULTATS")
+        left, right = st.columns((1, 1))
+        with left:
+            st.markdown("**DESPESES**")
+            st_metric(label="Sòl (+ altres costos del sòl)", value=f"{estatic['total_solar']:,.0f} €")
+            st_metric(label="Edificació (+ honoraris, llicències, despeses legals, altres)", value=f"{estatic['total_edificacion']:,.0f} €")
+            st_metric(label="Administració de la promoció", value=f"{estatic['admin1']:,.0f} €")
+            st_metric(label="Comercialització", value=f"{estatic['admin2']:,.0f} €")
+            st_metric(label="**TOTAL DESPESES**", value=f"{estatic['total_gastos']:,.0f} €")
+        with right:
+            st.markdown("**INGRESSOS I RESULTAT**")
+            st_metric(label="Ingressos per vendes", value=f"{estatic['ingresos']:,.0f} €")
+            st_metric(label="**BAII** (abans d'impostos i interessos)", value=f"{estatic['baii']:,.0f} €")
+            st_metric(label="Interessos hipoteca", value=f"{total_intereses:,.0f} €")
+            st_metric(label="Despeses de constitució", value=f"{estatic['gastos_constitucio']:,.0f} €")
+            st_metric(label="**BAI** (abans d'impostos)", value=f"{estatic['bai']:,.0f} €")
+
+        st.markdown("")
+        st.markdown('<div id="viab-dinamic" class="viab-anchor"></div>', unsafe_allow_html=True)
+        st.subheader("ANÀLISI DINÀMIC — CASH FLOWS TRIMESTRALS")
+        dinamic_display = dinamic_df.copy()
+        dinamic_display["TOTAL"] = dinamic_display.sum(axis=1)
+        st.markdown(taula_html_es(dinamic_display.round(0), precision=0), unsafe_allow_html=True)
+        st.markdown(filedownload(dinamic_display, "Viabilitat_cashflows.xlsx"), unsafe_allow_html=True)
+
+        left, right = st.columns((1, 1))
+        with left:
+            _viab_fig1 = go.Figure()
+            _viab_fig1.add_trace(go.Bar(x=quarters, y=dinamic_df.loc["CASH FLOW ABANS DE FINANÇAMENT", quarters], name="Abans de finançament", marker=dict(color=PLOTLY_PALETTE[0])))
+            _viab_fig1.add_trace(go.Scatter(x=quarters, y=dinamic_df.loc["CASH FLOW ABANS DE FINANÇAMENT ACUM", quarters], name="Acumulat", mode="lines+markers", line=dict(color=PLOTLY_PALETTE[1])))
+            _viab_fig1.update_layout(_plotly_layout("Cash flow abans de finançament", "€", title_x="Trimestre"))
+            st_plotly_chart(_viab_fig1, use_container_width=True, responsive=True)
+        with right:
+            _viab_fig2 = go.Figure()
+            _viab_fig2.add_trace(go.Bar(x=quarters, y=dinamic_df.loc["CASH FLOW DESPRÉS DE FINANÇAMENT", quarters], name="Després de finançament", marker=dict(color=PLOTLY_PALETTE[0])))
+            _viab_fig2.add_trace(go.Scatter(x=quarters, y=dinamic_df.loc["CASH FLOW DESPRÉS DE FINANÇAMENT ACUM", quarters], name="Acumulat", mode="lines+markers", line=dict(color=PLOTLY_PALETTE[1])))
+            _viab_fig2.update_layout(_plotly_layout("Cash flow després de finançament", "€", title_x="Trimestre"))
+            st_plotly_chart(_viab_fig2, use_container_width=True, responsive=True)
+
+        st.markdown("")
+        st.markdown('<div id="viab-resum" class="viab-anchor"></div>', unsafe_allow_html=True)
+        st.subheader("RESUM DE RESULTATS")
+        _viab_cf_despues = dinamic_df.loc["CASH FLOW DESPRÉS DE FINANÇAMENT", quarters]
+        _viab_cf_despues_acum = dinamic_df.loc["CASH FLOW DESPRÉS DE FINANÇAMENT ACUM", quarters]
+        _viab_tir = _viab_calcula_tir(_viab_cf_despues.values)
+        _viab_payback = _viab_calcula_payback(_viab_cf_despues_acum)
+        _viab_roe = (estatic["bai"] / estatic["recursos_propis"]) * 100 if estatic["recursos_propis"] else np.nan
+        _viab_roi = (estatic["baii"] / estatic["total_gastos"]) * 100 if estatic["total_gastos"] else np.nan
+
+        left, center, right = st.columns((1, 1, 1))
+        with left:
+            st_metric(label="**BAI**", value=f"{estatic['bai']:,.0f} €")
+            st_metric(label="**ROE** (retorn recursos propis)", value=f"{_viab_roe:.1f}%" if pd.notna(_viab_roe) else "No disponible")
+        with center:
+            st_metric(label="**ROI** (retorn de la inversió)", value=f"{_viab_roi:.1f}%" if pd.notna(_viab_roi) else "No disponible")
+            st_metric(label="**TIR** anualitzada", value=f"{_viab_tir:.1f}%" if pd.notna(_viab_tir) else "No disponible")
+        with right:
+            st_metric(label="**Payback**", value=str(_viab_payback) if _viab_payback else "No s'assoleix en el període")
+
+        _viab_inputs_df = pd.DataFrame({
+            "Camp": [
+                "Municipi del solar", "Superfície construïda (m²)", "Data d'inici de l'operació",
+                "Tipus d'interès (%)", "Cost mitjà del m² construït - BEC (€)", f"Preu de venda per m² ({viab_mun}) (€)",
+                "Mètode de càlcul del sòl", "Rendibilitat objectiu (%)", "Cost del sòl fixat manualment (€)",
+            ],
+            "Valor": [
+                viab_mun, viab_superficie, str(viab_data_inici),
+                viab_tipo_interes, viab_costem2, viab_preciom2,
+                viab_metode, viab_rendibilitat, viab_preu_solar_manual,
+            ],
+        })
+        _viab_hipotesis_df = pd.DataFrame({
+            "Hipòtesi": [
+                "Recursos propis (%)", "Crèdit (%)", "Honoraris tècnics (%)", "Administració de la promoció (%)",
+                "IVA solar (%)", "Altres costos del sòl (%)", "Llicències (%)", "Comercialització (%)",
+                "IVA edificació (%)", "Despeses legals (%)", "Altres costos edificació (%)",
+                "Despeses de constitució del crèdit (%)",
+            ],
+            "Valor (%)": [
+                viab_recursos_propis_pct, viab_credit_pct, viab_honoraris_pct, viab_admin_promocio_pct,
+                viab_iva_solar_pct, viab_otros_solar_pct, viab_llicencies_pct, viab_comercialitzacio_pct,
+                viab_iva_edificacio_pct, viab_gastos_legals_pct, viab_altres_edif_pct, viab_gastos_constitucio_pct,
+            ],
+        })
+        _viab_estatic_df = pd.DataFrame({
+            "Concepte": [
+                "Sòl (+ altres costos del sòl)", "Edificació (+ honoraris, llicències, despeses legals, altres)",
+                "Administració de la promoció", "Comercialització", "TOTAL DESPESES",
+                "Ingressos per vendes", "BAII (abans d'impostos i interessos)", "Interessos hipoteca",
+                "Despeses de constitució", "BAI (abans d'impostos)",
+            ],
+            "Import (€)": [
+                estatic["total_solar"], estatic["total_edificacion"], estatic["admin1"], estatic["admin2"], estatic["total_gastos"],
+                estatic["ingresos"], estatic["baii"], total_intereses, estatic["gastos_constitucio"], estatic["bai"],
+            ],
+        })
+        _viab_resum_df = pd.DataFrame({
+            "Indicador": ["BAI (€)", "ROE - retorn recursos propis (%)", "ROI - retorn de la inversió (%)", "TIR anualitzada (%)", "Payback"],
+            "Valor": [estatic["bai"], _viab_roe, _viab_roi, _viab_tir, str(_viab_payback) if _viab_payback else "No s'assoleix en el període"],
+        })
+
+        def _viab_build_resum_excel():
+            from openpyxl.styles import Font, PatternFill, Alignment
+            from openpyxl.utils import get_column_letter
+
+            BRAND_FILL = PatternFill(start_color="C1571E", end_color="C1571E", fill_type="solid")
+            BRAND_FONT = Font(color="FFFFFF", bold=True)
+            TOTAL_FILL = PatternFill(start_color="E3A94C", end_color="E3A94C", fill_type="solid")
+
+            def _style_header(ws):
+                for cell in ws[1]:
+                    cell.fill = BRAND_FILL
+                    cell.font = BRAND_FONT
+                    cell.alignment = Alignment(horizontal="center", vertical="center")
+
+            def _autofit(ws):
+                for col_idx in range(1, ws.max_column + 1):
+                    letter = get_column_letter(col_idx)
+                    max_len = max((len(str(ws.cell(r, col_idx).value)) for r in range(1, ws.max_row + 1) if ws.cell(r, col_idx).value is not None), default=8)
+                    ws.column_dimensions[letter].width = min(max(max_len + 2, 10), 40)
+
+            def _format_label_value(ws):
+                # Els valors barregen text, €, % i m² dins la mateixa columna "Valor": el format
+                # es decideix mirant la unitat entre parèntesis de l'etiqueta de cada fila.
+                for label_cell, value_cell in ws.iter_rows(min_row=2, min_col=1, max_col=2):
+                    if not isinstance(value_cell.value, (int, float)):
+                        continue
+                    label = str(label_cell.value or "")
+                    if "(%)" in label:
+                        value_cell.number_format = '0.0"%"'
+                    elif "(€)" in label:
+                        value_cell.number_format = '#,##0 €'
+                    elif "(m²)" in label:
+                        value_cell.number_format = '#,##0" m²"'
+
+            def _format_block(ws, fmt, min_row=2, min_col=1):
+                for row in ws.iter_rows(min_row=min_row, min_col=min_col):
+                    for cell in row:
+                        if isinstance(cell.value, (int, float)):
+                            cell.number_format = fmt
+
+            def _highlight_total_column(ws):
+                total_col = next((c.column for c in ws[1] if c.value == "TOTAL"), None)
+                if total_col is None:
+                    return
+                for row in ws.iter_rows(min_row=2, min_col=total_col, max_col=total_col):
+                    for cell in row:
+                        cell.font = Font(bold=True)
+                        cell.fill = TOTAL_FILL
+
+            towrite = io.BytesIO()
+            with pd.ExcelWriter(towrite, engine="openpyxl") as writer:
+                _viab_resum_df.to_excel(writer, sheet_name="Resum de resultats", index=False, header=True)
+                _viab_inputs_df.to_excel(writer, sheet_name="Dades d'entrada", index=False, header=True)
+                _viab_hipotesis_df.to_excel(writer, sheet_name="Hipòtesis (%)", index=False, header=True)
+                _viab_curves_edited.to_excel(writer, sheet_name="Corbes trimestrals (%)", index=True, header=True)
+                _viab_estatic_df.to_excel(writer, sheet_name="Anàlisi estàtic", index=False, header=True)
+                dinamic_display.to_excel(writer, sheet_name="Anàlisi dinàmic", index=True, header=True)
+
+                ws_resum = writer.sheets["Resum de resultats"]
+                _style_header(ws_resum)
+                _format_label_value(ws_resum)
+                ws_resum.freeze_panes = "A2"
+
+                ws_inputs = writer.sheets["Dades d'entrada"]
+                _style_header(ws_inputs)
+                _format_label_value(ws_inputs)
+                ws_inputs.freeze_panes = "A2"
+
+                ws_hip = writer.sheets["Hipòtesis (%)"]
+                _style_header(ws_hip)
+                _format_block(ws_hip, '0.0"%"', min_col=2)
+                ws_hip.freeze_panes = "A2"
+
+                ws_curves = writer.sheets["Corbes trimestrals (%)"]
+                _style_header(ws_curves)
+                _format_block(ws_curves, '0.0"%"', min_col=2)
+                ws_curves.freeze_panes = "B2"
+
+                ws_estatic = writer.sheets["Anàlisi estàtic"]
+                _style_header(ws_estatic)
+                _format_block(ws_estatic, '#,##0 €', min_col=2)
+                ws_estatic.freeze_panes = "A2"
+
+                ws_dinamic = writer.sheets["Anàlisi dinàmic"]
+                _style_header(ws_dinamic)
+                _format_block(ws_dinamic, '#,##0 €', min_col=2)
+                _highlight_total_column(ws_dinamic)
+                ws_dinamic.freeze_panes = "B2"
+
+                for ws in (ws_resum, ws_inputs, ws_hip, ws_curves, ws_estatic, ws_dinamic):
+                    _autofit(ws)
+
+            towrite.seek(0)
+            b64 = base64.b64encode(towrite.read()).decode("latin-1")
+            return f'''<a href="data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,{b64}" download="Viabilitat_resum_complet.xlsx">
+            <button class="download-button">Descarregar Resultats</button></a>'''
+
+        st.markdown("")
+        st.markdown(_viab_build_resum_excel(), unsafe_allow_html=True)
 
 ############################################################ ESTUDI D'OFERTA D'OBRA NOVA APCE (afegit) ############################################################
 # Integració autocontinguda de Z:\ESTUDIS\APP\Estudi-oferta\Estudi_oferta_atlas.py com a nova
@@ -7173,7 +7290,16 @@ def _oferta_fig_mapa_oferta(gdf, locations, z, customdata, hovertemplate, zoom=6
     ))
     fig.update_layout(
         title=dict(text=""),  # evita que st_plotly_chart (que fixa title.font sense text) mostri "undefined"
-        mapbox_style="carto-positron",
+        # "white-bg" + capa ràster pròpia: és la manera d'usar un mapa base propi sense
+        # token de Mapbox. Abans era mapbox_style="carto-positron", que ara arriba amb
+        # la marca d'aigua "API KEY REQUIRED" de CARTO (vegeu TILES_CLAR).
+        mapbox_style="white-bg",
+        mapbox_layers=[{
+            "below": "traces",
+            "sourcetype": "raster",
+            "sourceattribution": TILES_ATRIBUCIO,
+            "source": [TILES_CLAR],
+        }],
         mapbox_zoom=zoom,
         mapbox_center={"lat": 41.65, "lon": 1.55},
         margin=dict(l=0, r=0, t=0, b=0),
@@ -7473,9 +7599,12 @@ def oferta_color_mapa(valor, minim, maxim):
     return colors.to_hex(rgba)
 
 
-def oferta_folium_map(tmp, title, h=760):
-    tiles = "CartoDB dark_matter" if st.session_state.get("theme") == "dark" else "CartoDB voyager"
-    m = folium.Map([41.7, 1.6], zoom_start=8, tiles=tiles, width="100%", height=f"{h}px")
+def oferta_folium_map(tmp, title):
+    tiles = TILES_FOSC if st.session_state.get("theme") == "dark" else TILES_CLAR
+    # Sense width/height: la mida la fixa st_folium. Especificar-la també aquí feia que
+    # streamlit-folium calculés malament l'alçada de l'iframe (2.552 px per a un mapa de
+    # 760 px), deixant ~1.800 px de forat buit sota cada mapa (2026-09-07).
+    m = folium.Map([41.7, 1.6], zoom_start=8, tiles=tiles, attr=TILES_ATRIBUCIO)
     vals = tmp["valor"].dropna()
     minim = float(vals.min()) if not vals.empty else 0.0
     maxim = float(vals.max()) if not vals.empty else 0.0
@@ -7573,9 +7702,10 @@ def oferta_popup_grup_habitatges(grup):
     """
 
 
-def oferta_mapa_punts_habitatges(punts, h=680):
-    tiles = "CartoDB dark_matter" if st.session_state.get("theme") == "dark" else "CartoDB positron"
-    m = folium.Map([41.7, 1.6], zoom_start=8, tiles=tiles, width="100%", height=f"{h}px")
+def oferta_mapa_punts_habitatges(punts):
+    tiles = TILES_FOSC if st.session_state.get("theme") == "dark" else TILES_CLAR
+    # Sense width/height: la mida la fixa st_folium (vegeu la nota a oferta_folium_map).
+    m = folium.Map([41.7, 1.6], zoom_start=8, tiles=tiles, attr=TILES_ATRIBUCIO)
     dades_fast = []
     for grup in oferta_agrupar_punts_habitatges(punts):
         if grup["n"] > 1:
@@ -7897,8 +8027,8 @@ if selected == "Estudi d'Oferta Obra Nova":
             _oferta_shp_mapa = oferta_load_shp(SHAPEFILE_MUN)
             if _oferta_shp_mapa is not None:
                 tmp = oferta_build_tmp(_oferta_shp_mapa, df_map)
-                m = oferta_folium_map(tmp, f"{label} · {tipologia.lower().capitalize()} · {any_mapa}", h=760)
-                st_folium(m, use_container_width=True, height=760, returned_objects=[])
+                m = oferta_folium_map(tmp, f"{label} · {tipologia.lower().capitalize()} · {any_mapa}")
+                st_folium(m, use_container_width=True, height=MAPA_ALCADA, returned_objects=[])
             else:
                 st.warning("El shapefile no conté un camp municipal compatible.")
         else:
@@ -7914,7 +8044,7 @@ if selected == "Estudi d'Oferta Obra Nova":
             oferta_titol_seccio("Mapa d'habitatges en oferta")
             punts = oferta_preparar_punts_habitatges(oferta_dades_totals, any_punts, tipologia_punts)
             if punts:
-                st_folium(oferta_mapa_punts_habitatges(punts, h=680), use_container_width=True, height=680, returned_objects=[])
+                st_folium(oferta_mapa_punts_habitatges(punts), use_container_width=True, height=MAPA_ALCADA, returned_objects=[])
             else:
                 st.info("No hi ha coordenades disponibles.")
 

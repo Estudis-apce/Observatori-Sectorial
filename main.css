@@ -562,6 +562,14 @@ iframe[title="streamlit_folium.st_folium"] {
   right: clamp(8px, 2vw, 24px);
   z-index: 1001;
   width: auto !important;
+  /* Fons propi: en flotar sobre el contingut, sense fons se superposava a les
+     taules en fer scroll (a mòbil arribava a tapar xifres). Amb la píndola, tant
+     l'interruptor com el que hi ha a sota es continuen llegint. */
+  background: var(--app-surface-solid);
+  border: 1px solid var(--app-border);
+  border-radius: 999px;
+  padding: 2px 10px;
+  box-shadow: 0 2px 8px var(--app-shadow);
 }
 /* Streamlit dona width:100% (via l'ample del contenidor de pàgina) al
    checkbox/toggle intern per defecte: forcem que s'ajusti al contingut
@@ -828,3 +836,37 @@ html, body, [data-testid="stAppViewContainer"], section.main { scroll-behavior: 
   margin: 0;
 }
 
+
+/* ==========================================================================
+   MAPES (streamlit-folium)
+   streamlit-folium 0.22 dimensiona malament l'iframe quan es fa servir
+   use_container_width=True: mesurat en producció i en local, generava iframes
+   de 2.200-3.100 px d'alçada per a mapes de ~700 px, deixant un forat buit
+   enorme sota cada mapa (que a més es pintava fosc). L'alçada es fixa aquí,
+   que és determinista, en comptes de confiar en el càlcul del component.
+   Ha de coincidir amb MAPA_ALCADA d'APP_Dades.py (720) + el marge intern
+   del document folium (20px).
+   ========================================================================== */
+iframe[title="streamlit_folium.st_folium"] {
+  height: 740px !important;
+  min-height: 740px !important;
+  max-height: 740px !important;
+  width: 100% !important;
+  border-radius: 10px;
+}
+
+/* ==========================================================================
+   GRÀFICS EN PANTALLES ESTRETES
+   A 375px d'ample, les llegendes dels gràfics (p.ex. "Qualificacions
+   provisionals d'HPO (Promotor públic)") ocupaven ~456px i quedaven tallades.
+   Es redueix la mida de la lletra de la llegenda i dels eixos només a mòbil.
+   ========================================================================== */
+@media (max-width: 640px) {
+  .js-plotly-plot .legend text {
+    font-size: 9px !important;
+  }
+  .js-plotly-plot .xtick text,
+  .js-plotly-plot .ytick text {
+    font-size: 9px !important;
+  }
+}

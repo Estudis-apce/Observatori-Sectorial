@@ -1,0 +1,17 @@
+# Tema de Streamlit fixat (2026-09-07).
+#
+# Sense aquest fitxer, Streamlit adopta el mode clar/fosc del NAVEGADOR de cada
+# visitant. Això trencava la web per a qualsevol persona amb el dispositiu en mode
+# fosc: main.css pintava el fons clar de la marca, però Streamlit aplicava la seva
+# plantilla fosca als gràfics de Plotly, i les etiquetes dels eixos sortien en
+# #E6EAF1 sobre fons crema (contrast 1,15:1 -- pràcticament invisibles).
+#
+# Fixant aquí el tema base, l'aspecte deixa de dependre del dispositiu del visitant.
+# El mode fosc PROPI de l'app (l'interruptor 🌙, que canvia les variables --app-* de
+# main.css) segueix funcionant igual: aquest bloc només fixa el punt de partida.
+[theme]
+base = "light"
+primaryColor = "#C1571E"
+backgroundColor = "#FDF9F2"
+secondaryBackgroundColor = "#FFFFFF"
+textColor = "#34231A"

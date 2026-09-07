@@ -5,3 +5,22 @@ __pycache__/
 # Sistema operatiu
 Thumbs.db
 .DS_Store
+
+# Interruptor local de les seccions encara no publicades (Viabilitat Financera i
+# Fitxa de demanda potencial). Si aquest fitxer existeix, l'app les mostra. MAI
+# ha d'arribar al repositori: a producció no hi és i, per tant, no es veuen.
+.seccions-en-proves
+
+# Còpies antigues de dades que l'app ja NO llegeix (2026-09-07). Es queden al disc,
+# però fora del repositori: eren ~120 MB que es descarregaven a cada desplegament
+# sense que ningú els fes servir. L'app només llegeix els 4 fitxers de Resources/JSON.
+/DT_indicadors_demanda_potencial.json
+/Resources/DT_simple.json
+/Resources/DT_indicadors_demanda_potencial.json
+/OLD/
+
+# Còpies de treball que no han d'anar al repositori
+/APP_Dades_sin_ficha.py
+/indicadores_informe_demanda.json
+/indicadores_informe_demanda_comarca.json
+/indicadores_informe_demanda_provincia.json
