@@ -472,7 +472,13 @@ def st_metric(label=None, value=None, delta=None, **kwargs):
     - cadenes: es converteixen amb _es_num_str (1,234.5 -> 1.234,5)
     - enters/decimals crus: s'afegeix el separador de milers amb punt."""
     if isinstance(value, str):
-        value = _es_num_str(value)
+        # Xarxa de seguretat: cap targeta no ha d'ensenyar mai "nan%" o "inf%" com a
+        # valor. Passava a l'IGC quan la seva sèrie s'acabava un mes abans que la de
+        # l'IPC i es prenia l'última fila a cebes.
+        if re.match(r"^\s*[-+]?(nan|inf|none)\b", value, re.IGNORECASE):
+            value = "No disponible"
+        else:
+            value = _es_num_str(value)
     elif isinstance(value, (int, np.integer)):
         value = f"{int(value):,}".replace(",", ".")
     elif isinstance(value, (float, np.floating)):
@@ -496,8 +502,11 @@ def st_metric(label=None, value=None, delta=None, **kwargs):
 
 def taula_html_es(df, precision=1) -> str:
     """HTML d'una taula (DataFrame) amb números en format espanyol (per a taules que
-    no passen per format_dataframes, com les mensuals)."""
-    return df.style.format(thousands=".", decimal=",", precision=precision).to_html()
+    no passen per format_dataframes, com les mensuals).
+    na_rep pel mateix motiu que a format_dataframes(): sense això, els mesos sense
+    dada sortien com a "nan" (p. ex. l'IRAV, que no arrenca fins al novembre del
+    2024, a les taules dels anys anteriors)."""
+    return df.style.format(thousands=".", decimal=",", precision=precision, na_rep="—").to_html()
 
 # ========== ÍNDICES / PERIODOS / FILTROS ==========
 def _flatten_period_token(token) -> str:
@@ -2873,29 +2882,39 @@ def _subperiodes_any(data_ori, columns_sel, year):
     return valors[valors != 0]
 
 
+def _periodes_per_any(data_ori):
+    """Quants subperíodes té un any sencer a `data_ori`: 4 si és trimestral (índex
+    'AAAATn', via tidy_Catalunya) i 12 si és mensual (columna o índex de dates, via
+    tidy_Catalunya_m / tidy_Catalunya_mensual)."""
+    if "Fecha" in getattr(data_ori, "columns", []):
+        return 12
+    idx = pd.Index(data_ori.index.astype(str))
+    return 4 if idx.str.match(r"^\d{4}T\d$").any() else 12
+
+
 def _operacio_any_obert(df_annual, data_ori, columns_sel, anys_a_provar=8):
     """Diu si l'any encara obert s'ha de SUMAR o fer-ne la MITJANA.
 
     No hi ha cap llista d'indicadors escrita a mà (caldria mantenir-la cada cop que
-    es canvia una etiqueta): es calibra amb els anys ja TANCATS. Per a cada any que
-    surt alhora a la taula anual i a la subanual es mira quina de les dues
-    operacions reprodueix el valor anual publicat, i es fa recompte.
+    es canvia una etiqueta): es calibra amb els anys ja TANCATS, comparant el valor
+    anual publicat amb dues hipòtesis, totes dues portades a l'escala d'un any:
+      - NIVELL: l'any val la mitjana dels seus subperíodes;
+      - FLUX:   l'any val aquesta mitjana multiplicada pels subperíodes que té un
+                any sencer (4 si la taula és trimestral, 12 si és mensual).
 
-    Comprovat sobre les dades de l'app: als indicadors de nivell (ocupació,
-    afiliats, atur registrat, preus, superfícies, Euríbor, IPC, costos) l'anual
-    coincideix amb la mitjana amb un error de 0,0000%, i als de flux (habitatges
-    iniciats i acabats, compravendes, hipoteques, contractes de lloguer,
-    qualificacions d'HPO, consum de ciment) coincideix amb la suma.
+    Comparar a escala d'any sencer és el que fa que funcioni encara que la taula
+    estigui retallada, que és el cas habitual: tidy_Catalunya_m() only conserva els
+    mesos fins a l'últim publicat, així que a la secció de Compravendes d'Espanya
+    cada any hi arriba amb 6 mesos i no amb 12. Amb la comparació anterior, que
+    exigia que la suma dels subperíodes quadrés amb l'anual, cap any no podia
+    decidir i es queia a la reserva: les compravendes del 2026 sortien com 57.911
+    (la mitjana mensual) en lloc de 347.464 (l'acumulat dels dos trimestres).
 
-    Els anys amb un sol subperíode no compten: suma i mitjana hi coincideixen i no
-    decideixen res. Si cap any no decideix (històric molt escàs, típicament un
-    municipi petit), es torna "mitjana". Mesurat sobre les dades: de totes les
-    columnes que queden sense decidir, només 3 de DT_terr i cap de DT_mun ni de
-    DT_dis tenen dos o més subperíodes a l'any obert -- a la resta, suma i mitjana
-    donen el mateix i la reserva és indiferent. I d'aquelles 3, cap no és d'una
-    família de flux."""
+    Els anys amb un sol subperíode no compten: no distingeixen res. Si cap any no
+    decideix, es torna "mitjana"."""
     if df_annual is None or columns_sel not in getattr(df_annual, "columns", []):
         return "mitjana"
+    per_any = _periodes_per_any(data_ori)
     serie_anual = df_annual[columns_sel]
     if isinstance(serie_anual, pd.DataFrame):  # noms de columna duplicats
         serie_anual = serie_anual.iloc[:, 0]
@@ -2909,14 +2928,19 @@ def _operacio_any_obert(df_annual, data_ori, columns_sel, anys_a_provar=8):
         valors = _subperiodes_any(data_ori, columns_sel, any_str)
         if len(valors) < 2:
             continue
-        suma, mitjana = float(valors.sum()), float(valors.mean())
+        mitjana = float(valors.mean())
         escala = max(abs(float(referencia)), 1e-9)
-        if abs(suma - mitjana) <= 0.05 * escala:
-            continue  # empat pràctic: aquest any no distingeix res
-        err_suma = abs(suma - float(referencia)) / escala
+        # Les dues hipòtesis, totes dues portades a l'escala d'un any sencer.
         err_mitjana = abs(mitjana - float(referencia)) / escala
-        if min(err_suma, err_mitjana) > 0.02:
-            continue  # ni l'una ni l'altra reprodueix l'anual: no decideix
+        err_suma = abs(mitjana * per_any - float(referencia)) / escala
+        # El marge és ampli a propòsit: quan la taula ve retallada, els mesos que
+        # hi queden no tenen per què ser representatius de l'any (estacionalitat).
+        # Tot i així les dues hipòtesis es diferencien per un factor de 4 o 12, o
+        # sigui que no es confonen: el que cal és que se'n descarti una de clara.
+        if min(err_suma, err_mitjana) > 0.35:
+            continue  # cap de les dues s'acosta: aquest any no decideix
+        if abs(err_suma - err_mitjana) < 0.10:
+            continue  # empat: tampoc no decideix
         vots["suma" if err_suma < err_mitjana else "mitjana"] += 1
     return "suma" if vots["suma"] > vots["mitjana"] else "mitjana"
 
@@ -3986,12 +4010,17 @@ if selected == "Espanya":
             st.subheader("ÍNDEX DE PREUS AL CONSUM (IPC)")
             st.markdown(f'<div class="custom-box">ANY {selected_year_n}</div>', unsafe_allow_html=True)
             min_year=2002
-            table_espanya_m = tidy_Catalunya_mensual(DT_monthly, ["Fecha", "IPC_Nacional_x", "IPC_subyacente", "IGC_Nacional"], f"{str(min_year)}-01-01", date_max_ipc,["Data","IPC (Base 2021)","IPC subjacent", "IGC"])
+            # L'IRAV (Índex de Referència d'Actualització de Rendes) només existeix a
+            # la font mensual i des del novembre del 2024, així que no entra ni a la
+            # taula anual ni al seu Excel: allà s'hi quedarien els tres indicadors
+            # que sí que tenen sèrie anual.
+            table_espanya_m = tidy_Catalunya_mensual(DT_monthly, ["Fecha", "IPC_Nacional_x", "IPC_subyacente", "IGC_Nacional", "IRAV_Nacional"], f"{str(min_year)}-01-01", date_max_ipc,["Data","IPC (Base 2021)","IPC subjacent", "IGC", "IRAV"])
 
             table_espanya_m["Inflació"] = table_espanya_m["IPC (Base 2021)"].pct_change(12).mul(100)
             table_espanya_m["Inflació subjacent"] = round(table_espanya_m["IPC subjacent"],1)
             table_espanya_m["Índex de Garantia de Competitivitat (IGC)"] = round(table_espanya_m["IGC"],1)
-            table_espanya_m = table_espanya_m.drop(["IPC subjacent", "IGC"], axis=1)
+            table_espanya_m["Índex de Referència d'Actualització de Rendes (IRAV)"] = round(table_espanya_m["IRAV"],2)
+            table_espanya_m = table_espanya_m.drop(["IPC subjacent", "IGC", "IRAV"], axis=1)
             table_espanya_y = tidy_Catalunya_anual(DT_terr_y, ["Fecha","IPC_Nacional_x", "IPC_subyacente", "IGC_Nacional"], min_year, annual_upper_bound("IPC_Nacional_x"),["Any", "IPC (Base 2021)","IPC subjacent", "IGC"])
             table_espanya_y["Inflació"] = table_espanya_y["IPC (Base 2021)"].pct_change(1).mul(100)
             table_espanya_y["Inflació subjacent"] = round(table_espanya_y["IPC subjacent"],1)
@@ -3999,13 +4028,26 @@ if selected == "Espanya":
             table_espanya_y = table_espanya_y.drop(["IPC subjacent", "IGC"], axis=1)
 
             if selected_year_n==max_year:
-                left, center, right= st.columns((1,1,1))
+                # Quatre targetes en lloc de tres: l'IRAV només s'ensenya en aquesta
+                # branca, que llegeix l'últim valor mensual. A la branca dels anys
+                # anteriors les targetes surten de la taula anual, que no en té.
+                # Cada sèrie s'atura on s'atura: l'IGC arriba fins al juny del 2026 i
+                # l'IPC fins al juliol. Agafar l'última FILA a cebes feia que la
+                # targeta de l'IGC sortís com a "nan%". Es pren l'últim valor
+                # PUBLICAT de cada sèrie, que és el que espera qui ho llegeix.
+                def _ultim_publicat(col, decimals=1):
+                    s = table_espanya_m[col].dropna()
+                    return f"{round(s.iloc[-1], decimals)}%" if len(s) else "No disponible"
+                left, center, right, dreta = st.columns((1,1,1,1))
                 with left:
-                    st_metric(label="**Inflació** (var. anual)", value=f"""{round(table_espanya_m["Inflació"][-1],1)}%""")
+                    st_metric(label="**Inflació** (var. anual)", value=_ultim_publicat("Inflació"))
                 with center:
-                    st_metric(label="**Inflació subjacent** (var. anual)", value=f"""{round(table_espanya_m["Inflació subjacent"][-1],1)}%""")
+                    st_metric(label="**Inflació subjacent** (var. anual)", value=_ultim_publicat("Inflació subjacent"))
                 with right:
-                    st_metric(label="**Índex de Garantia de Competitivitat** (var. anual)", value=f"""{round(table_espanya_m["Índex de Garantia de Competitivitat (IGC)"][-1],1)}%""")
+                    st_metric(label="**Índex de Garantia de Competitivitat** (var. anual)", value=_ultim_publicat("Índex de Garantia de Competitivitat (IGC)"))
+                with dreta:
+                    st_metric(label="**Índex de Referència d'Actualització de Rendes**",
+                              value=_ultim_publicat("Índex de Referència d'Actualització de Rendes (IRAV)", 2))
             if selected_year_n!=max_year:
                 left, center, right= st.columns((1,1,1))
                 with left:
@@ -4017,14 +4059,20 @@ if selected == "Espanya":
             st.markdown("")
             st.markdown("")
             # st.subheader("**DADES TRIMESTRALS MÉS RECENTS**")
-            st.markdown(taula_html_es(table_monthly(table_espanya_m[(table_espanya_m["Data"]>=f"{str(selected_year_n)}-01-01") & (table_espanya_m["Data"]<f"{str(selected_year_n+1)}-01-01")], selected_year_n)), unsafe_allow_html=True)
+            _mesos_any = table_espanya_m[(table_espanya_m["Data"]>=f"{str(selected_year_n)}-01-01") & (table_espanya_m["Data"]<f"{str(selected_year_n+1)}-01-01")]
+            # Als anys anteriors al novembre del 2024 l'IRAV no existeix: en lloc de
+            # deixar-hi una fila sencera de guions, es treu la columna d'aquell any.
+            _col_irav = "Índex de Referència d'Actualització de Rendes (IRAV)"
+            if _col_irav in _mesos_any.columns and _mesos_any[_col_irav].isna().all():
+                _mesos_any = _mesos_any.drop(columns=[_col_irav])
+            st.markdown(taula_html_es(table_monthly(_mesos_any, selected_year_n)), unsafe_allow_html=True)
             st.markdown(filedownload(table_monthly(table_espanya_m, 2023), f"{selected_index}_Espanya.xlsx"), unsafe_allow_html=True)
             st.markdown("")
             st.markdown("")
             # st.subheader("**DADES ANUALS**")
             st.markdown(table_year(table_espanya_y, 2008, True, False).to_html(), unsafe_allow_html=True)
             st.markdown(filedownload(table_year(table_espanya_y, 2008, True, False), f"{selected_index}_Espanya_anual.xlsx"), unsafe_allow_html=True)
-            st_plotly_chart(line_plotly(table_espanya_m[table_espanya_m.index>="2015-01-01"], ["Inflació", "Inflació subjacent", "Índex de Garantia de Competitivitat (IGC)"], "Evolució mensual de la inflació (variació anual de l'IPC) i l'IGC (Índex de Garantia de Competitivitat)", "%",  "Any"), use_container_width=True, responsive=True)
+            st_plotly_chart(line_plotly(table_espanya_m[table_espanya_m.index>="2015-01-01"], ["Inflació", "Inflació subjacent", "Índex de Garantia de Competitivitat (IGC)", "Índex de Referència d'Actualització de Rendes (IRAV)"], "Evolució mensual de la inflació, l'IGC i l'IRAV", "%",  "Any"), use_container_width=True, responsive=True)
         if selected_index=="Consum de ciment":
             st.subheader("CONSUM DE CIMENT")
             st.markdown(f'<div class="custom-box">ANY {selected_year_n}</div>', unsafe_allow_html=True)
