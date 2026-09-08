@@ -2448,6 +2448,67 @@ date_max_hipo_aux = f"{CURRENT_YEAR_LIMIT}-12-31"
 date_max_ciment_aux = f"{CURRENT_YEAR_LIMIT}-12-31"
 date_max_euribor = f"{CURRENT_YEAR_LIMIT}-12-31"
 date_max_ipc = f"{CURRENT_YEAR_LIMIT}-12-31"
+
+
+def _neteja_periodes_no_publicats(df, date_col="Fecha"):
+    """Alguns indicadors arriben amb 0 en lloc de NaN als períodes que encara no
+    s'han publicat. El cas conegut són els contractes de lloguer (trvivalq_*): el
+    2026T2 valia 0 a 59 de 59 territoris, 960 de 960 municipis i 85 de 85
+    districtes -- literalment cap no en tenia dada. Sense netejar-ho, la línia de
+    contractes queia en picat fins a zero (a sis gràfics de pantalla i al del PDF
+    de l'informe de mercat) i, a més, last_closed_year() comptava aquell 0 com a
+    dada: quan el tall de dades arribés a un quart trimestre, donaria el 2026 per
+    any tancat amb un sol trimestre real de contractes.
+
+    Un període es considera NO publicat per a una família d'indicador (el prefix
+    abans del primer "_", o sigui totes les seves geografies alhora) quan:
+      a) cap columna de la família no hi té cap valor diferent de 0, i
+      b) no hi ha cap període POSTERIOR amb dada per a aquesta família.
+
+    Les dues condicions juntes són el que ho distingeix d'un zero real, cosa que
+    una simple "ratxa de zeros al final" no podria garantir: un municipi que de
+    veritat no tingui cap contracte un trimestre no arrossega els altres 959, i un
+    zero real de tota una categoria (les qualificacions d'HPO poc freqüents, on
+    que tot Espanya estigui a zero un mes és cert) té períodes amb dada després.
+
+    Només s'examinen les famílies el darrer període de les quals és un 0 explícit,
+    que és exactament com es manifesta el problema. Això ho fa 15 vegades més
+    ràpid (234 ms en lloc de 3,4 s, amb les 9.644 columnes de DT_mun) a canvi de
+    deixar fora dues famílies d'HPO de lloguer que l'app no fa servir enlloc."""
+    if df.empty:
+        return df
+    df = df.sort_values(date_col)
+    numeriques = [c for c in df.select_dtypes(include=[np.number]).columns
+                  if c not in (date_col, "Trimestre", "Data", "index")]
+    if not numeriques:
+        return df
+    darrera = df.iloc[-1][numeriques].to_numpy(dtype="float64", na_value=np.nan)
+    candidates = {c.split("_", 1)[0] for c, v in zip(numeriques, darrera) if v == 0}
+    if not candidates:
+        return df
+
+    cols = [c for c in numeriques if c.split("_", 1)[0] in candidates]
+    valors = df[cols].to_numpy(dtype="float64", na_value=np.nan)
+    _, idx_fam = np.unique(np.array([c.split("_", 1)[0] for c in cols]), return_inverse=True)
+
+    te_dada = ~np.isnan(valors) & (valors != 0)
+    per_familia = np.zeros((valors.shape[0], idx_fam.max() + 1), dtype=bool)
+    np.logical_or.at(per_familia.T, idx_fam, te_dada.T)          # OR de tota la família
+    te_alguna_dada = per_familia.any(axis=0)
+    ultim_amb_dada = per_familia.shape[0] - 1 - np.argmax(per_familia[::-1], axis=0)
+
+    files = np.arange(valors.shape[0])[:, None]
+    a_buidar = ((files > ultim_amb_dada[idx_fam][None, :])
+                & te_alguna_dada[idx_fam][None, :]
+                & ~np.isnan(valors))
+    if not a_buidar.any():
+        return df
+    valors[a_buidar] = np.nan
+    df = df.copy()
+    df[cols] = valors
+    return df
+
+
 @st.cache_data(show_spinner=False)
 def import_data(trim_limit, month_limit):
     with open(DATA_FILE_SIMPLE, 'r', encoding="utf-8") as outfile:
@@ -2574,6 +2635,19 @@ def import_data(trim_limit, month_limit):
     DT_mun_y_pre2 = pd.merge(DT_mun_y_pre, DT_mun_y_aux2, how="left", on="Fecha")
     DT_mun_y_def = pd.merge(DT_mun_y_pre2, DT_mun_y_aux3, how="left", on="Fecha")    
     DT_mun_y_def = DT_mun_y_def[[col for col in DT_mun_y_def.columns if col in ("Trimestre", "Fecha") or col.rsplit("_", 1)[-1] in mun_set]]
+
+    # Els períodes encara no publicats han d'arribar com a NaN i no com a 0 (vegeu
+    # _neteja_periodes_no_publicats). Es fa aquí, dins de la funció cachejada i
+    # després del tall de dates, perquè tot el que llegeix aquestes taules -- els
+    # gràfics de pantalla, els del PDF, les taules, els Excel, les targetes i
+    # last_closed_year -- vegi exactament el mateix. Les taules anuals no hi
+    # passen: el seu valor de l'any en curs és una acumulació parcial real, no un
+    # zero de farciment, i qui decideix si l'any compta com a tancat és
+    # last_closed_year mirant la taula trimestral, que sí que queda neta.
+    DT_monthly = _neteja_periodes_no_publicats(DT_monthly)
+    DT_terr = _neteja_periodes_no_publicats(DT_terr)
+    DT_mun_def = _neteja_periodes_no_publicats(DT_mun_def)
+    DT_dis = _neteja_periodes_no_publicats(DT_dis)
 
     return([DT_monthly, DT_terr, DT_terr_y, DT_mun_def, DT_mun_y_def, DT_dis, DT_dis_y, maestro_mun, maestro_dis, censo_2021, rentaneta_mun, censo_2021_dis, rentaneta_dis, idescat_muns, df_mun_idescat, df_pob_ine, DT_mun_y])
 import_data = auto_spinner(import_data)
@@ -3084,16 +3158,31 @@ def filedownload(df, filename):
     return _build_download_href(df, filename)
 
 # ========== PLOTLY HELPERS ==========
-def _plotly_titol(text, amplada=42):
-    """Plotly no parteix els títols en línies: els llargs es tallaven a mitja paraula
-    (mesurat: "Qualificacions provisionals de protecció oficial segons tipus de
-    promotor" ocupava 456 px dins d'un gràfic de 357 px, i al mòbil dins de 337 px).
-    Es parteix per paraules en línies de com a màxim `amplada` caràcters."""
+def _plotly_titol(text, per_linia=70):
+    """Plotly no parteix els títols en línies ni els encongeix: els llargs es
+    tallaven a mitja paraula ("Qualificacions provisionals de protecció oficial
+    segons tipus de promotor" ocupava 456 px dins d'un gràfic de 357). Aquí es
+    parteixen per paraules, i en línies EQUILIBRADES: repartir-ho a parts iguals
+    evita l'orfe d'una sola paraula a la segona línia.
+
+    Sobre el llindar de 70: el text fa uns 6,3 px per caràcter. A escriptori els
+    gràfics van a dues columnes i mesuren 570-650 px, o sigui que hi caben 90-100
+    caràcters i cap títol de l'app no hi arriba; el gràfic més estret és el del
+    mòbil (375 px de pantalla -> 337 px de gràfic), on només n'hi caben 53.
+    Amb 70 hi ha 15 títols més que queden a una línia a l'ordinador a canvi de
+    sortir tallats al mòbil: és una decisió presa a consciència, prioritzant
+    l'escriptori, no un descuit. Si algun dia es vol que no es talli mai enlloc,
+    el valor segur és 52."""
     if not text:
         return text
+    text = " ".join(str(text).split())
+    if len(text) <= per_linia:
+        return text
+    n_linies = -(-len(text) // per_linia)      # sostre de la divisió
+    objectiu = -(-len(text) // n_linies)       # llargada de línia equilibrada
     linies, actual = [], ""
-    for paraula in str(text).split():
-        if actual and len(actual) + 1 + len(paraula) > amplada:
+    for paraula in text.split():
+        if actual and len(actual) + 1 + len(paraula) > objectiu and len(linies) < n_linies - 1:
             linies.append(actual)
             actual = paraula
         else:

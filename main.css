@@ -275,6 +275,17 @@ table thead th.index_name {
   cursor: pointer; /* Change cursor to hand on hover */
 }
 
+/* Els botons de descàrrega són <a> inline-block amb encoixinat vertical, i la
+   caixa de línia del contenidor no compta aquest encoixinat: el botó fa 50 px
+   però el seu .element-container només 34, o sigui que sobresurt 16 px per sota
+   i es menjava sencer el gap de 16 px que Streamlit deixa entre elements. El
+   resultat era zero separació real: el títol del gràfic següent quedava
+   enganxat al botó. Es compensa amb marge inferior al contenidor. */
+.element-container:has(.download-button),
+.element-container:has(> [data-testid="stMarkdownContainer"] > .button) {
+  margin-bottom: 26px;
+}
+
 /* ==========================================================================
    BOTONS NATIUS DE STREAMLIT (st.button / st.download_button)
    Mateix aspecte que .download-button (l'estil ja establert per als botons
