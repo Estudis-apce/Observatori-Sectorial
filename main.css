@@ -160,7 +160,12 @@ table {
   margin: 5px auto;
   font-size: clamp(0.58rem, 0.5rem + 0.25vw, 0.75rem);
   font-family: sans-serif;
-  min-width: 400px;
+  /* Una taula amb width:auto s'ajusta al contingut i deixava mig pam de columna
+     buida a la dreta (990 px dins d'un contenidor de 1.319 px). min-width:100%
+     puja el terra a l'amplada del contenidor sense posar-hi sostre: a escriptori
+     s'estira i reparteix l'espai entre columnes, i a mòbil segueix manant el
+     contingut i el contenidor continua fent scroll lateral com fins ara. */
+  min-width: 100%;
   box-shadow: 0 0 20px var(--app-shadow);
   text-align: center;
 }
@@ -191,6 +196,17 @@ table tbody tr:last-of-type {
 [data-testid="stMarkdownContainer"] table tbody th,
 [data-testid="stMarkdownContainer"] table tbody td {
   padding: clamp(5px, 0.8vw, 9px) clamp(4px, 0.6vw, 8px);
+}
+
+/* Streamlit pinta les vores de les cel·les amb un color translúcid
+   (rgba(52,35,26,0.2)). Amb border-collapse: collapse, sota la vora no s'hi veu
+   el fons de la cel·la sinó el de la pàgina (crema), així que sobre el taronja de
+   la capçalera aquella franja d'1 px es llegia com una ratlla BLANCA: entre "Any"
+   i "Trimestre", entre els grups d'anys i a la vora exterior. Amb una vora opaca
+   del mateix taronja del fons, la capçalera queda com una banda contínua.
+   Mateix motiu d'especificitat que la regla d'encoixinat de sobre. */
+[data-testid="stMarkdownContainer"] table thead th {
+  border-color: var(--app-primary);
 }
 
 /* ==========================================================================
@@ -589,19 +605,24 @@ iframe[title="streamlit_folium.st_folium"] {
 
 /* ==========================================================================
    SWITCH CLAR / FOSC
-   Flotant a la part superior dreta. Mateix patró que .menu-nav-anchor: una
-   àncora buida just abans de l'st.toggle permet trobar-lo i posicionar-lo
-   amb CSS sense dependre de classes internes de Streamlit.
+   Píndola alineada a la dreta, just abans de la targeta de capçalera. Mateix
+   patró que .menu-nav-anchor: una àncora buida just abans de l'st.toggle permet
+   trobar-lo i col·locar-lo amb CSS sense dependre de classes internes d'Streamlit.
+
+   Abans anava amb position:fixed a dalt a la dreta i, com que la pàgina li passava
+   per sota, tapava el que hi quedés a sota: xifres de la cantonada superior dreta
+   de les taules en fer scroll i, segons l'amplada, el botó "Informe de Mercat i
+   Sectorial" del menú principal. Dins del flux normal ja no tapa res; l'interruptor
+   es fa servir un cop i, per tornar-hi, el botó "amunt" ja porta al principi.
    ========================================================================== */
 .element-container:has(.theme-toggle-anchor) + .element-container {
-  position: fixed;
-  top: 8px;
-  right: clamp(8px, 2vw, 24px);
-  z-index: 1001;
-  width: auto !important;
-  /* Fons propi: en flotar sobre el contingut, sense fons se superposava a les
-     taules en fer scroll (a mòbil arribava a tapar xifres). Amb la píndola, tant
-     l'interruptor com el que hi ha a sota es continuen llegint. */
+  width: fit-content !important;
+  margin-left: auto;
+  margin-right: 0;
+  /* Mateixa compensació que la targeta de capçalera: Streamlit posa un gap de 16 px
+     entre cada element de la columna, inclosos els divs àncora buits que hi ha
+     abans, i sense això la píndola deixava una franja morta a dalt de tot. */
+  margin-top: -34px;
   background: var(--app-surface-solid);
   border: 1px solid var(--app-border);
   border-radius: 999px;
@@ -644,12 +665,6 @@ iframe[title="streamlit_folium.st_folium"] {
   background-color: var(--app-text);
   -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z'/%3E%3C/svg%3E") center / contain no-repeat;
   mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z'/%3E%3C/svg%3E") center / contain no-repeat;
-}
-@media (max-width: 480px) {
-  .element-container:has(.theme-toggle-anchor) + .element-container {
-    top: 6px;
-    right: 6px;
-  }
 }
 
 /* ==========================================================================

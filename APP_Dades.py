@@ -29,6 +29,7 @@ import numpy_financial as npf
 import geopandas as gpd
 
 import streamlit as st
+import streamlit.components.v1 as components
 import folium
 from folium.plugins import FastMarkerCluster
 from streamlit_folium import st_folium
@@ -231,10 +232,13 @@ NOMBRE_VARIABLES_IDESCAT = {
     "Matrimonis sobre població": "Matrimonis sobre població total (%)",
 }
 
-# Any d'inici de les taules trimestrals EN PANTALLA (2023T1). Les descàrregues Excel
-# i el PDF no en depenen: mantenen el rang d'anys de sempre.
+# Anys d'inici de les taules del PDF de la fitxa municipal (i només d'aquestes).
 TABLE_TRIM_START_YEAR = 2023
 TABLE_ANNUAL_START_YEAR = 2014
+# Any d'inici de les taules trimestrals EN PANTALLA. No té res a veure amb les dues
+# constants de sobre, que són del PDF, ni amb les descàrregues Excel, que mantenen
+# el rang d'anys de sempre.
+TAULES_PANTALLA_ANY_INICI = 2022
 SERIES_START_YEAR = 2014
 TITLE_SPACING_CM = 0.6
 # Mida de pàgina del PDF de l'informe de mercat: panoràmica 16:9 (com una diapositiva
@@ -2761,22 +2765,92 @@ def tidy_present_monthly_diff(data_ori, columns_sel, year):
     output_data = output_data[output_data["Any"]==int(year)].set_index("Any")
     return(output_data.values[0][0]) if not output_data.empty else np.nan
 
-def tidy_present_level(data_ori, columns_sel, year):
-    """Nivell en viu (suma) de `columns_sel` per a `year`, sumant només els
-    trimestres/mesos d'aquell any que ja existeixen a `data_ori` — tant si
-    l'índex és 'Trimestre' (YYYYTn, taules trimestrals via tidy_Catalunya)
-    com si hi ha una columna 'Fecha' (taules mensuals via tidy_Catalunya_m).
-    Complementa la taula anual (tidy_Catalunya_anual) quan l'any seleccionat
-    encara és parcial i no hi surt."""
+def _subperiodes_any(data_ori, columns_sel, year):
+    """Valors subanuals (trimestres o mesos) de `columns_sel` per a `year`, tant si
+    l'índex és 'Trimestre' (YYYYTn, taules trimestrals via tidy_Catalunya) com si hi
+    ha una columna 'Fecha' (taules mensuals via tidy_Catalunya_m).
+    Es descarten els 0 a més dels NaN: a les sèries de lloguer el 0 vol dir "sense
+    dada" (mateix criteri que table_trim, que fa replace(0, NaN), i que
+    tidy_present, que filtra !=0), i comptar-los enfonsaria la mitjana."""
     if columns_sel not in data_ori.columns:
-        return np.nan
+        return pd.Series(dtype="float64")
     if "Fecha" in data_ori.columns:
         sub = data_ori[["Fecha", columns_sel]].dropna()
         sub = sub[sub["Fecha"].dt.year == int(year)]
     else:
         idx = data_ori.index.astype(str)
         sub = data_ori.loc[idx.str[:4] == str(year), [columns_sel]].dropna()
-    return sub[columns_sel].sum() if not sub.empty else np.nan
+    if sub.empty:
+        return pd.Series(dtype="float64")
+    valors = pd.to_numeric(sub[columns_sel], errors="coerce").dropna()
+    return valors[valors != 0]
+
+
+def _operacio_any_obert(df_annual, data_ori, columns_sel, anys_a_provar=8):
+    """Diu si l'any encara obert s'ha de SUMAR o fer-ne la MITJANA.
+
+    No hi ha cap llista d'indicadors escrita a mà (caldria mantenir-la cada cop que
+    es canvia una etiqueta): es calibra amb els anys ja TANCATS. Per a cada any que
+    surt alhora a la taula anual i a la subanual es mira quina de les dues
+    operacions reprodueix el valor anual publicat, i es fa recompte.
+
+    Comprovat sobre les dades de l'app: als indicadors de nivell (ocupació,
+    afiliats, atur registrat, preus, superfícies, Euríbor, IPC, costos) l'anual
+    coincideix amb la mitjana amb un error de 0,0000%, i als de flux (habitatges
+    iniciats i acabats, compravendes, hipoteques, contractes de lloguer,
+    qualificacions d'HPO, consum de ciment) coincideix amb la suma.
+
+    Els anys amb un sol subperíode no compten: suma i mitjana hi coincideixen i no
+    decideixen res. Si cap any no decideix (històric molt escàs, típicament un
+    municipi petit), es torna "mitjana". Mesurat sobre les dades: de totes les
+    columnes que queden sense decidir, només 3 de DT_terr i cap de DT_mun ni de
+    DT_dis tenen dos o més subperíodes a l'any obert -- a la resta, suma i mitjana
+    donen el mateix i la reserva és indiferent. I d'aquelles 3, cap no és d'una
+    família de flux."""
+    if df_annual is None or columns_sel not in getattr(df_annual, "columns", []):
+        return "mitjana"
+    serie_anual = df_annual[columns_sel]
+    if isinstance(serie_anual, pd.DataFrame):  # noms de columna duplicats
+        serie_anual = serie_anual.iloc[:, 0]
+    serie_anual = pd.to_numeric(serie_anual, errors="coerce").dropna()
+
+    vots = {"suma": 0, "mitjana": 0}
+    for any_, referencia in list(serie_anual.items())[-anys_a_provar:]:
+        any_str = str(any_)[:4]
+        if not any_str.isdigit():
+            continue
+        valors = _subperiodes_any(data_ori, columns_sel, any_str)
+        if len(valors) < 2:
+            continue
+        suma, mitjana = float(valors.sum()), float(valors.mean())
+        escala = max(abs(float(referencia)), 1e-9)
+        if abs(suma - mitjana) <= 0.05 * escala:
+            continue  # empat pràctic: aquest any no distingeix res
+        err_suma = abs(suma - float(referencia)) / escala
+        err_mitjana = abs(mitjana - float(referencia)) / escala
+        if min(err_suma, err_mitjana) > 0.02:
+            continue  # ni l'una ni l'altra reprodueix l'anual: no decideix
+        vots["suma" if err_suma < err_mitjana else "mitjana"] += 1
+    return "suma" if vots["suma"] > vots["mitjana"] else "mitjana"
+
+
+def tidy_present_level(df_annual, data_ori, columns_sel, year):
+    """Nivell en viu de `columns_sel` per a `year`, a partir dels trimestres/mesos
+    d'aquell any que ja existeixen a `data_ori`. Complementa la taula anual
+    (tidy_Catalunya_anual) quan l'any seleccionat encara és parcial i no hi surt.
+
+    Abans sumava SEMPRE. Sumar és correcte per als indicadors de flux, però per als
+    de nivell l'any val la MITJANA dels seus subperíodes, i sumar-los multiplicava
+    el valor pel nombre de trimestres publicats: el 2026, el mercat laboral de
+    Catalunya sortia exactament el doble (7.865 milers d'ocupats en lloc de 3.932) i
+    els costos de construcció i l'Euríbor, el triple. L'operació la decideix ara
+    _operacio_any_obert() indicador per indicador."""
+    valors = _subperiodes_any(data_ori, columns_sel, year)
+    if valors.empty:
+        return np.nan
+    if _operacio_any_obert(df_annual, data_ori, columns_sel) == "suma":
+        return float(valors.sum())
+    return float(valors.mean())
 
 # Sense @st.cache_data: es crida ~200 cops per rerun (un cop per mètrica) amb dos
 # DataFrames com a arguments; fer-ne el hash costaria ~1 s per rerun mentre que el
@@ -2822,9 +2896,11 @@ def indicator_year(df, df_aux, year, variable, tipus, frequency=None):
         if not df_level.empty:
             return round(df_level.values[0],2)
         if any_obert:
-            # Any en curs sense fila a la taula anual (encara no tancat):
-            # acumulat en viu amb els trimestres/mesos ja disponibles.
-            valor = tidy_present_level(df_aux, variable_str, year)
+            # Any en curs sense fila a la taula anual (encara no tancat): càlcul en
+            # viu amb els trimestres/mesos ja disponibles. Es passa `df` (la taula
+            # anual) perquè tidy_present_level pugui deduir, amb els anys ja
+            # tancats, si aquest indicador s'ha de sumar o fer-ne la mitjana.
+            valor = tidy_present_level(df, df_aux, variable_str, year)
             return round(valor,2) if pd.notna(valor) else np.nan
         return np.nan
     if tipus=="var":
@@ -3008,13 +3084,37 @@ def filedownload(df, filename):
     return _build_download_href(df, filename)
 
 # ========== PLOTLY HELPERS ==========
+def _plotly_titol(text, amplada=42):
+    """Plotly no parteix els títols en línies: els llargs es tallaven a mitja paraula
+    (mesurat: "Qualificacions provisionals de protecció oficial segons tipus de
+    promotor" ocupava 456 px dins d'un gràfic de 357 px, i al mòbil dins de 337 px).
+    Es parteix per paraules en línies de com a màxim `amplada` caràcters."""
+    if not text:
+        return text
+    linies, actual = [], ""
+    for paraula in str(text).split():
+        if actual and len(actual) + 1 + len(paraula) > amplada:
+            linies.append(actual)
+            actual = paraula
+        else:
+            actual = f"{actual} {paraula}".strip()
+    if actual:
+        linies.append(actual)
+    return "<br>".join(linies)
+
+
 def _plotly_layout(title_main, title_y, title_x=None, tickformat=",d", legend=None, **extra):
     """Layout comú per als gràfics go.Figure (title/eixos/llegenda/fons compartits)."""
     yaxis = dict(title=title_y, automargin=True)
     if tickformat:
         yaxis["tickformat"] = tickformat
     layout_kwargs = dict(
-        title=dict(text=title_main, font=dict(size=13)),
+        # yanchor="top" + automargin: per defecte Plotly centra el títol sobre la vora
+        # superior del contenidor, cosa que amb dues línies deixava la primera 12 px
+        # per damunt del gràfic i es tallava. Ancorat a dalt creix cap avall i
+        # l'automargin li reserva el marge que necessiti.
+        title=dict(text=_plotly_titol(title_main), font=dict(size=13),
+                   automargin=True, yanchor="top", y=0.97),
         yaxis=yaxis,
         legend=legend or dict(x=0, y=1.15, orientation="h"),
         paper_bgcolor="rgba(0,0,0,0)",
@@ -3036,7 +3136,12 @@ def _plotly_sparse_ticks(index, max_ticks=10):
         return None
     step = max(1, int(np.ceil(len(values) / max_ticks)))
     ticks = values[::step]
-    if ticks[-1] != values[-1]:
+    # L'últim valor només s'afegeix si queda prou lluny de l'última marca. Abans
+    # s'afegia sempre i, quan hi queia just al costat, les dues etiquetes girades
+    # 45° se superposaven: mesurat -33 px entre "2026T1" i "2026T2", contra els
+    # -7 px normals entre marques consecutives (que la inclinació ja absorbeix).
+    darrer_tick = (len(ticks) - 1) * step
+    if ticks[-1] != values[-1] and (len(values) - 1) - darrer_tick >= step / 2:
         ticks.append(values[-1])
     return ticks
 
@@ -3047,7 +3152,7 @@ def line_plotly_pob(df, col, title_main, title_y, title_x="Any"):
         df,
         x="Fecha",
         y=col,
-        title=title_main,
+        title=_plotly_titol(title_main),
         labels={"Fecha": title_x, col: title_y},
         color_discrete_sequence=[GLOBAL_PALETTE["total"]],
         markers=True
@@ -3163,7 +3268,7 @@ def comparativa_style_table(df, precision=0):
     sense dada sortien com a "nan"."""
     return df.style.format(thousands=".", decimal=",", precision=precision, na_rep="—")
 
-def comparativa_display_trim(t_trim, year_ini=TABLE_TRIM_START_YEAR):
+def comparativa_display_trim(t_trim, year_ini=TAULES_PANTALLA_ANY_INICI):
     """Retalla la taula trimestral (índex 'AAAATn') per a la PANTALLA: la descàrrega
     manté tot l'històric (t_trim sencer). Com que després es transposa, els trimestres
     acaben sent COLUMNES, així que s'arrenca al mateix any que la resta de taules de
@@ -3221,7 +3326,7 @@ def area_plotly(table_n, selection_n, title_main, title_y, trim):
         plot_cat,
         x=plot_cat.index,
         y=plot_cat.columns,
-        title=title_main,
+        title=_plotly_titol(title_main),
         color_discrete_sequence=PLOTLY_PALETTE,
     )
     fig.for_each_trace(lambda trace: trace.update(fillcolor=trace.line.color))
@@ -3440,6 +3545,29 @@ def _municipis_mes_propers(selected_mun, n=10):
     return noms[:n]
 
 
+def _talls_quantils(serie):
+    """Talls de color per quantils per al mapa de municipis.
+
+    La distribució dels indicadors municipals és extremadament asimètrica (Barcelona
+    s'endú l'extrem: 1 a 1.199 habitatges iniciats el 2025). Amb els trams iguals que
+    folium aplica per defecte, gairebé tots els 947 municipis queien al primer tram i
+    el mapa sortia tot d'un mateix groc pàl·lid, sense distingir res.
+
+    Retorna None quan no hi ha prou dades o quan els quantils no donen prou talls
+    diferents; en aquest cas la crida es queda amb el comportament de sempre."""
+    valors = pd.to_numeric(serie, errors="coerce").dropna()
+    if len(valors) < 10:
+        return None
+    talls = sorted({round(float(v), 2) for v in valors.quantile([0, .5, .75, .9, .96, .99, 1])})
+    if len(talls) < 3:
+        return None
+    # Els extrems s'eixamplen (mai s'estrenyen) perquè l'arrodoniment no deixi cap
+    # municipi fora de tots els trams, cosa que faria petar folium.
+    talls[0] = min(talls[0], float(valors.min()))
+    talls[-1] = max(talls[-1], float(valors.max()))
+    return talls
+
+
 def folium_mapa_municipis(map_df, any, name_var):
     dark_mode = st.session_state.get("theme", "light") == "dark"
     m = folium.Map(
@@ -3461,6 +3589,7 @@ def folium_mapa_municipis(map_df, any, name_var):
         # capes del mapa hi sortia literalment "macro_element_div_2".
         name=name_var,
         fill_color="YlOrRd",
+        bins=_talls_quantils(map_df["valor"]) or 6,
         fill_opacity=0.78,
         line_opacity=0.25,
         line_weight=0.4,
@@ -3481,7 +3610,9 @@ def folium_mapa_municipis(map_df, any, name_var):
         style_function=lambda x: {"fillOpacity": 0, "weight": 0.35, "color": "#444444"},
         highlight_function=lambda x: {"weight": 2, "color": "#C1571E", "fillOpacity": 0.18},
     ).add_to(m)
-    folium.LayerControl(collapsed=False).add_to(m)
+    # collapsed=True: desplegat, el quadre de capes queia just damunt de la barra de
+    # color de la llegenda i tapava els valors. Plegat queda com una icona discreta.
+    folium.LayerControl(collapsed=True).add_to(m)
     return m
 
 # Defining years
@@ -3797,7 +3928,7 @@ if selected == "Espanya":
             st.markdown("")
             st.markdown("")
             # st.subheader("**DADES TRIMESTRALS MÉS RECENTS**")
-            st.markdown(table_trim(table_espanya_q, 2023, True, False).to_html(), unsafe_allow_html=True)
+            st.markdown(table_trim(table_espanya_q, TAULES_PANTALLA_ANY_INICI, True, False).to_html(), unsafe_allow_html=True)
             st.markdown(filedownload(table_trim(table_espanya_q, 2012), f"{selected_index}_Espanya.xlsx"), unsafe_allow_html=True)
             st.markdown("")
             st.markdown("")
@@ -3876,7 +4007,7 @@ if selected == "Espanya":
             st.markdown("")
             st.markdown("")
             # st.subheader("**DADES TRIMESTRALS MÉS RECENTS**")
-            st.markdown(table_trim(table_espanya_q, 2023).to_html(), unsafe_allow_html=True)
+            st.markdown(table_trim(table_espanya_q, TAULES_PANTALLA_ANY_INICI).to_html(), unsafe_allow_html=True)
             st.markdown(filedownload(table_trim(table_espanya_q, 2008), f"{selected_index}_Espanya.xlsx"), unsafe_allow_html=True)
             st.markdown("")
             st.markdown("")
@@ -3949,7 +4080,7 @@ if selected == "Espanya":
             st.markdown("")
             st.markdown("")
             # st.subheader("**DADES TRIMESTRALS MÉS RECENTS**")
-            st.markdown(table_trim(table_esp, 2023).to_html(), unsafe_allow_html=True)
+            st.markdown(table_trim(table_esp, TAULES_PANTALLA_ANY_INICI).to_html(), unsafe_allow_html=True)
             st.markdown(filedownload(table_trim(table_esp, 2008), f"{selected_index}_Espanya.xlsx"), unsafe_allow_html=True)
             st.markdown("")
             st.markdown("")
@@ -3995,7 +4126,7 @@ if selected == "Espanya":
             st.markdown("")
             st.markdown("")
             # st.subheader("**DADES TRIMESTRALS MÉS RECENTS**")
-            st.markdown(table_trim(table_esp, 2023).to_html(), unsafe_allow_html=True)
+            st.markdown(table_trim(table_esp, TAULES_PANTALLA_ANY_INICI).to_html(), unsafe_allow_html=True)
             st.markdown(filedownload(table_trim(table_esp, 2008), f"{selected_index}_Espanya.xlsx"), unsafe_allow_html=True)
             st.markdown("")
             st.markdown("")
@@ -4028,7 +4159,7 @@ if selected == "Espanya":
                 st.markdown("")
                 st.markdown("")
                 # st.subheader("**DADES TRIMESTRALS MÉS RECENTS**")
-                st.markdown(table_trim(table_esp, 2023, True, False).to_html(), unsafe_allow_html=True)
+                st.markdown(table_trim(table_esp, TAULES_PANTALLA_ANY_INICI, True, False).to_html(), unsafe_allow_html=True)
                 st.markdown(filedownload(table_trim(table_esp, 2008, True, False), f"{selected_index}_Espanya.xlsx"), unsafe_allow_html=True)
                 st.markdown("")
                 st.markdown("")
@@ -4064,7 +4195,7 @@ if selected == "Espanya":
                 st.markdown("")
                 st.markdown("")
                 # st.subheader("**DADES TRIMESTRALS MÉS RECENTS**")
-                st.markdown(table_trim(table_esp, 2023, True, False).to_html(), unsafe_allow_html=True)
+                st.markdown(table_trim(table_esp, TAULES_PANTALLA_ANY_INICI, True, False).to_html(), unsafe_allow_html=True)
                 st.markdown(filedownload(table_trim(table_esp, 2008, True, False), f"{selected_index}_Espanya.xlsx"), unsafe_allow_html=True)
                 st.markdown("")
                 st.markdown("")
@@ -4129,7 +4260,7 @@ if selected == "Catalunya":
             st.markdown("")
             st.markdown("")
             # st.subheader("**DADES TRIMESTRALS MÉS RECENTS**")
-            st.markdown(table_trim(table_catalunya_q, 2023, rounded=True).to_html(), unsafe_allow_html=True)
+            st.markdown(table_trim(table_catalunya_q, TAULES_PANTALLA_ANY_INICI, rounded=True).to_html(), unsafe_allow_html=True)
             st.markdown(filedownload(table_trim(table_catalunya_q, 2012, rounded=True), f"{selected_index}_Catalunya.xlsx"), unsafe_allow_html=True)
             st.markdown("")
             st.markdown("")
@@ -4162,7 +4293,7 @@ if selected == "Catalunya":
             st.markdown("")
             st.markdown("")
             # st.subheader("**DADES TRIMESTRALS MÉS RECENTS**")
-            st.markdown(table_trim(table_catalunya_q, 2023).to_html(), unsafe_allow_html=True)
+            st.markdown(table_trim(table_catalunya_q, TAULES_PANTALLA_ANY_INICI).to_html(), unsafe_allow_html=True)
             st.markdown(filedownload(table_trim(table_catalunya_q, 2013), f"{selected_index}_Catalunya.xlsx"), unsafe_allow_html=True)
             st.markdown("")
             st.markdown("")
@@ -4189,7 +4320,7 @@ if selected == "Catalunya":
             st.markdown("")
             st.markdown("")
             # st.subheader("**DADES TRIMESTRALS MÉS RECENTS**")
-            st.markdown(table_trim(table_catalunya_q, 2023).to_html(), unsafe_allow_html=True)
+            st.markdown(table_trim(table_catalunya_q, TAULES_PANTALLA_ANY_INICI).to_html(), unsafe_allow_html=True)
             st.markdown(filedownload(table_trim(table_catalunya_q, 2014), f"{selected_index}_Espanya.xlsx"), unsafe_allow_html=True)
             st.markdown("")
             st.markdown("")
@@ -4220,7 +4351,7 @@ if selected == "Catalunya":
             st.markdown("")
             st.markdown("")
             # st.subheader("**DADES TRIMESTRALS MÉS RECENTS**")
-            st.markdown(table_trim(table_catalunya_q, 2023).to_html(), unsafe_allow_html=True)
+            st.markdown(table_trim(table_catalunya_q, TAULES_PANTALLA_ANY_INICI).to_html(), unsafe_allow_html=True)
             st.markdown(filedownload(table_trim(table_catalunya_q, 2014), f"{selected_index}_Catalunya.xlsx"), unsafe_allow_html=True)
             st.markdown("")
             st.markdown("")
@@ -4320,7 +4451,7 @@ if selected == "Catalunya":
                 st.markdown("")
                 st.markdown("")
                 # st.subheader("**DADES TRIMESTRALS MÉS RECENTS**")
-                st.markdown(table_trim(table_Catalunya, 2023).to_html(), unsafe_allow_html=True)
+                st.markdown(table_trim(table_Catalunya, TAULES_PANTALLA_ANY_INICI).to_html(), unsafe_allow_html=True)
                 st.markdown(filedownload(table_trim(table_Catalunya, 2008), f"{selected_index}_Catalunya.xlsx"), unsafe_allow_html=True)
                 st.markdown("")
                 st.markdown("")
@@ -4364,7 +4495,7 @@ if selected == "Catalunya":
                 st.markdown("")
                 st.markdown("")
                 # st.subheader("**DADES TRIMESTRALS MÉS RECENTS**")
-                st.markdown(table_trim(table_Catalunya, 2023).to_html(), unsafe_allow_html=True)
+                st.markdown(table_trim(table_Catalunya, TAULES_PANTALLA_ANY_INICI).to_html(), unsafe_allow_html=True)
                 st.markdown(filedownload(table_trim(table_Catalunya, 2014), f"{selected_index}_Catalunya.xlsx"), unsafe_allow_html=True)
                 st.markdown("")
                 st.markdown("")
@@ -4401,7 +4532,7 @@ if selected == "Catalunya":
                 st.markdown("")
                 st.markdown("")
                 # st.subheader("**DADES TRIMESTRALS MÉS RECENTS**")
-                st.markdown(table_trim(table_Catalunya, 2023, True, False).to_html(), unsafe_allow_html=True)
+                st.markdown(table_trim(table_Catalunya, TAULES_PANTALLA_ANY_INICI, True, False).to_html(), unsafe_allow_html=True)
                 st.markdown(filedownload(table_trim(table_Catalunya, 2014, True, False), f"{selected_index}_Catalunya.xlsx"), unsafe_allow_html=True)
                 st.markdown("")
                 st.markdown("")
@@ -4438,7 +4569,7 @@ if selected == "Catalunya":
                 st.markdown("")
                 st.markdown("")
                 # st.subheader("**DADES TRIMESTRALS MÉS RECENTS**")
-                st.markdown(table_trim(table_Catalunya, 2023, True, False).to_html(), unsafe_allow_html=True)
+                st.markdown(table_trim(table_Catalunya, TAULES_PANTALLA_ANY_INICI, True, False).to_html(), unsafe_allow_html=True)
                 st.markdown(filedownload(table_trim(table_Catalunya, 2014, True, False), f"{selected_index}_Catalunya.xlsx"), unsafe_allow_html=True)
                 st.markdown("")
                 st.markdown("")
@@ -4470,7 +4601,7 @@ if selected == "Catalunya":
             st.markdown("")
             st.markdown("")
             # st.subheader("**DADES TRIMESTRALS MÉS RECENTS**")
-            st.markdown(table_trim(table_Catalunya, 2023, True).to_html(), unsafe_allow_html=True)
+            st.markdown(table_trim(table_Catalunya, TAULES_PANTALLA_ANY_INICI, True).to_html(), unsafe_allow_html=True)
             st.markdown(filedownload(table_trim(table_Catalunya, 2014, True), f"{selected_type}_Catalunya.xlsx"), unsafe_allow_html=True)
             st.markdown("")
             st.markdown("")
@@ -4632,7 +4763,7 @@ if selected == "Províncies i àmbits":
                 st.markdown("")
                 st.markdown("")
                 # st.subheader("**DADES TRIMESTRALS MÉS RECENTS**")
-                st.markdown(table_trim(table_province, 2023).to_html(), unsafe_allow_html=True)
+                st.markdown(table_trim(table_province, TAULES_PANTALLA_ANY_INICI).to_html(), unsafe_allow_html=True)
                 st.markdown(filedownload(table_trim(table_province, 2008), f"{selected_index}_{selected_geo}.xlsx"), unsafe_allow_html=True)
                 st.markdown("")
                 st.markdown("")
@@ -4674,7 +4805,7 @@ if selected == "Províncies i àmbits":
                 st.markdown("")
                 st.markdown("")
                 # st.subheader("**DADES TRIMESTRALS MÉS RECENTS**")
-                st.markdown(table_trim(table_province, 2023).to_html(), unsafe_allow_html=True)
+                st.markdown(table_trim(table_province, TAULES_PANTALLA_ANY_INICI).to_html(), unsafe_allow_html=True)
                 st.markdown(filedownload(table_trim(table_province, 2014), f"{selected_index}_{selected_geo}.xlsx"), unsafe_allow_html=True)
                 st.markdown("")
                 st.markdown("")
@@ -4712,7 +4843,7 @@ if selected == "Províncies i àmbits":
                 st.markdown("")
                 st.markdown("")
                 # st.subheader("**DADES TRIMESTRALS MÉS RECENTS**")
-                st.markdown(table_trim(table_province, 2023, True, False).to_html(), unsafe_allow_html=True)
+                st.markdown(table_trim(table_province, TAULES_PANTALLA_ANY_INICI, True, False).to_html(), unsafe_allow_html=True)
                 st.markdown(filedownload(table_trim(table_province, 2014, True, False), f"{selected_index}_{selected_geo}.xlsx"), unsafe_allow_html=True)
                 st.markdown("")
                 st.markdown("")
@@ -4750,7 +4881,7 @@ if selected == "Províncies i àmbits":
                 st.markdown("")
                 st.markdown("")
                 # st.subheader("**DADES TRIMESTRALS MÉS RECENTS**")
-                st.markdown(table_trim(table_province, 2023, True, False).to_html(), unsafe_allow_html=True)
+                st.markdown(table_trim(table_province, TAULES_PANTALLA_ANY_INICI, True, False).to_html(), unsafe_allow_html=True)
                 st.markdown(filedownload(table_trim(table_province, 2014, True, False), f"{selected_index}_{selected_geo}.xlsx"), unsafe_allow_html=True)
                 st.markdown("")
                 st.markdown("")
@@ -4811,7 +4942,7 @@ if selected == "Províncies i àmbits":
                 st.markdown("")
                 st.markdown("")
                 # st.subheader("**DADES TRIMESTRALS MÉS RECENTS**")
-                st.markdown(table_trim(table_province, 2023).to_html(), unsafe_allow_html=True)
+                st.markdown(table_trim(table_province, TAULES_PANTALLA_ANY_INICI).to_html(), unsafe_allow_html=True)
                 st.markdown(filedownload(table_trim(table_province, 2008), f"{selected_index}_{selected_geo}.xlsx"), unsafe_allow_html=True)
                 st.markdown("")
                 st.markdown("")
@@ -4853,7 +4984,7 @@ if selected == "Províncies i àmbits":
                 st.markdown("")
                 st.markdown("")
                 # st.subheader("**DADES TRIMESTRALS MÉS RECENTS**")
-                st.markdown(table_trim(table_province, 2023).to_html(), unsafe_allow_html=True)
+                st.markdown(table_trim(table_province, TAULES_PANTALLA_ANY_INICI).to_html(), unsafe_allow_html=True)
                 st.markdown(filedownload(table_trim(table_province, 2014), f"{selected_index}_{selected_geo}.xlsx"), unsafe_allow_html=True)
                 st.markdown("")
                 st.markdown("")
@@ -4891,7 +5022,7 @@ if selected == "Províncies i àmbits":
                 st.markdown("")
                 st.markdown("")
                 # st.subheader("**DADES TRIMESTRALS MÉS RECENTS**")
-                st.markdown(table_trim(table_province, 2023, True, False).to_html(), unsafe_allow_html=True)
+                st.markdown(table_trim(table_province, TAULES_PANTALLA_ANY_INICI, True, False).to_html(), unsafe_allow_html=True)
                 st.markdown(filedownload(table_trim(table_province, 2014, True, False), f"{selected_index}_{selected_geo}.xlsx"), unsafe_allow_html=True)
                 st.markdown("")
                 st.markdown("")
@@ -4929,7 +5060,7 @@ if selected == "Províncies i àmbits":
                 st.markdown("")
                 st.markdown("")
                 # st.subheader("**DADES TRIMESTRALS MÉS RECENTS**")
-                st.markdown(table_trim(table_province, 2023, True, False).to_html(), unsafe_allow_html=True)
+                st.markdown(table_trim(table_province, TAULES_PANTALLA_ANY_INICI, True, False).to_html(), unsafe_allow_html=True)
                 st.markdown(filedownload(table_trim(table_province, 2014, True, False), f"{selected_index}_{selected_geo}.xlsx"), unsafe_allow_html=True)
                 st.markdown("")
                 st.markdown("")
@@ -4963,7 +5094,7 @@ if selected == "Províncies i àmbits":
             st.markdown("")
             st.markdown("")
             # st.subheader("**DADES TRIMESTRALS MÉS RECENTS**")
-            st.markdown(table_trim(table_province, 2023, rounded=True).to_html(), unsafe_allow_html=True)
+            st.markdown(table_trim(table_province, TAULES_PANTALLA_ANY_INICI, rounded=True).to_html(), unsafe_allow_html=True)
             st.markdown(filedownload(table_trim(table_province, 2014, rounded=True), f"{selected_type}_{selected_geo}.xlsx"), unsafe_allow_html=True)
             st.markdown("")
             st.markdown("")
@@ -4997,7 +5128,7 @@ if selected == "Províncies i àmbits":
             st.markdown("")
             st.markdown("")
             # st.subheader("**DADES TRIMESTRALS MÉS RECENTS**")
-            st.markdown(table_trim(table_province, 2023, rounded=True).to_html(), unsafe_allow_html=True)
+            st.markdown(table_trim(table_province, TAULES_PANTALLA_ANY_INICI, rounded=True).to_html(), unsafe_allow_html=True)
             st.markdown(filedownload(table_trim(table_province, 2014, rounded=True), f"{selected_type}_{selected_geo}.xlsx"), unsafe_allow_html=True)
             st.markdown("")
             st.markdown("")
@@ -5160,7 +5291,7 @@ if selected=="Comarques":
             st.markdown("")
             st.markdown("")
             # st.subheader("**DADES TRIMESTRALS MÉS RECENTS**")
-            st.markdown(table_trim(table_com, 2023).to_html(), unsafe_allow_html=True)
+            st.markdown(table_trim(table_com, TAULES_PANTALLA_ANY_INICI).to_html(), unsafe_allow_html=True)
             st.markdown(filedownload(table_trim(table_com, 2008), f"{selected_index}_{selected_com}.xlsx"), unsafe_allow_html=True)
             st.markdown("")
             st.markdown("")
@@ -5203,7 +5334,7 @@ if selected=="Comarques":
             st.markdown("")
             st.markdown("")
             # st.subheader("**DADES TRIMESTRALS MÉS RECENTS**")
-            st.markdown(table_trim(table_com, 2023).to_html(), unsafe_allow_html=True)
+            st.markdown(table_trim(table_com, TAULES_PANTALLA_ANY_INICI).to_html(), unsafe_allow_html=True)
             st.markdown(filedownload(table_trim(table_com, 2014), f"{selected_index}_{selected_com}.xlsx"), unsafe_allow_html=True)
             st.markdown("")
             st.markdown("")
@@ -5241,7 +5372,7 @@ if selected=="Comarques":
             st.markdown("")
             st.markdown("")
             # st.subheader("**DADES TRIMESTRALS MÉS RECENTS**")
-            st.markdown(table_trim(table_com, 2023,True, False).to_html(), unsafe_allow_html=True)
+            st.markdown(table_trim(table_com, TAULES_PANTALLA_ANY_INICI,True, False).to_html(), unsafe_allow_html=True)
             st.markdown(filedownload(table_trim(table_com, 2014, True, False), f"{selected_index}_{selected_com}.xlsx"), unsafe_allow_html=True)
             st.markdown("")
             st.markdown("")
@@ -5278,7 +5409,7 @@ if selected=="Comarques":
             st.markdown("")
             st.markdown("")
             # st.subheader("**DADES TRIMESTRALS MÉS RECENTS**")
-            st.markdown(table_trim(table_com, 2023, True, False).to_html(), unsafe_allow_html=True)
+            st.markdown(table_trim(table_com, TAULES_PANTALLA_ANY_INICI, True, False).to_html(), unsafe_allow_html=True)
             st.markdown(filedownload(table_trim(table_com, 2014, True, False), f"{selected_index}_{selected_com}.xlsx"), unsafe_allow_html=True)
             st.markdown("")
             st.markdown("")
@@ -5311,7 +5442,7 @@ if selected=="Comarques":
         st.markdown("")
         st.markdown("")
         # st.subheader("**DADES TRIMESTRALS MÉS RECENTS**")
-        st.markdown(table_trim(table_province, 2023, rounded=True).to_html(), unsafe_allow_html=True)
+        st.markdown(table_trim(table_province, TAULES_PANTALLA_ANY_INICI, rounded=True).to_html(), unsafe_allow_html=True)
         st.markdown(filedownload(table_trim(table_province, 2014, rounded=True), f"{selected_type}_{selected_com}.xlsx"), unsafe_allow_html=True)
         st.markdown("")
         st.markdown("")
@@ -5484,7 +5615,7 @@ if selected=="Municipis":
             st.markdown("")
             st.markdown("")
             # st.subheader("**DADES TRIMESTRALS MÉS RECENTS**")
-            st.markdown(table_trim(table_mun, 2023).to_html(), unsafe_allow_html=True)
+            st.markdown(table_trim(table_mun, TAULES_PANTALLA_ANY_INICI).to_html(), unsafe_allow_html=True)
             st.markdown(filedownload(table_trim(table_mun, 2008), f"{selected_index}_{selected_mun}.xlsx"), unsafe_allow_html=True)
             st.markdown("")
             st.markdown("")
@@ -5525,7 +5656,7 @@ if selected=="Municipis":
             st.markdown("")
             st.markdown("")
             # st.subheader("**DADES TRIMESTRALS MÉS RECENTS**")
-            st.markdown(table_trim(table_mun, 2023).to_html(), unsafe_allow_html=True)
+            st.markdown(table_trim(table_mun, TAULES_PANTALLA_ANY_INICI).to_html(), unsafe_allow_html=True)
             st.markdown(filedownload(table_trim(table_mun, 2014), f"{selected_index}_{selected_mun}.xlsx"), unsafe_allow_html=True)
             st.markdown("")
             st.markdown("")
@@ -5566,7 +5697,7 @@ if selected=="Municipis":
             st.markdown("")
             st.markdown("")
             # st.subheader("**DADES TRIMESTRALS MÉS RECENTS**")
-            st.markdown(table_trim(table_mun, 2023, True, False).to_html(), unsafe_allow_html=True)
+            st.markdown(table_trim(table_mun, TAULES_PANTALLA_ANY_INICI, True, False).to_html(), unsafe_allow_html=True)
             st.markdown(filedownload(table_trim(table_mun, 2014, True, False), f"{selected_index}_{selected_mun}.xlsx"), unsafe_allow_html=True)
             st.markdown("")
             st.markdown("")
@@ -5622,7 +5753,7 @@ if selected=="Municipis":
             st.markdown("")
             st.markdown("")
             # st.subheader("**DADES TRIMESTRALS MÉS RECENTS**")
-            st.markdown(table_trim(table_mun, 2023, True, False).to_html(), unsafe_allow_html=True)
+            st.markdown(table_trim(table_mun, TAULES_PANTALLA_ANY_INICI, True, False).to_html(), unsafe_allow_html=True)
             st.markdown(filedownload(table_trim(table_mun, 2014, True, False), f"{selected_index}_{selected_mun}.xlsx"), unsafe_allow_html=True)
             st.markdown("")
             st.markdown("")
@@ -5654,7 +5785,7 @@ if selected=="Municipis":
                 st.markdown("")
         st.markdown("")
         # st.subheader("**DADES TRIMESTRALS MÉS RECENTS**")
-        st.markdown(table_trim(table_mun, 2023, rounded=True).to_html(), unsafe_allow_html=True)
+        st.markdown(table_trim(table_mun, TAULES_PANTALLA_ANY_INICI, rounded=True).to_html(), unsafe_allow_html=True)
         st.markdown(filedownload(table_trim(table_mun, 2014, rounded=True), f"{selected_type}_{selected_mun}.xlsx"), unsafe_allow_html=True)
         st.markdown("")
         st.markdown("")
@@ -5945,7 +6076,7 @@ if selected=="Districtes de Barcelona":
             st.markdown("")
             st.markdown("")
             # st.subheader("**DADES TRIMESTRALS MÉS RECENTS**")
-            st.markdown(table_trim(table_dis, 2023).to_html(), unsafe_allow_html=True)
+            st.markdown(table_trim(table_dis, TAULES_PANTALLA_ANY_INICI).to_html(), unsafe_allow_html=True)
             st.markdown(filedownload(table_trim(table_dis, 2014), f"{selected_index}_{selected_dis}.xlsx"), unsafe_allow_html=True)
             st.markdown("")
             st.markdown("")
@@ -5984,7 +6115,7 @@ if selected=="Districtes de Barcelona":
             st.markdown("")
             st.markdown("")
             # st.subheader("**DADES TRIMESTRALS MÉS RECENTS**")
-            st.markdown(table_trim(table_dis, 2023).to_html(), unsafe_allow_html=True)
+            st.markdown(table_trim(table_dis, TAULES_PANTALLA_ANY_INICI).to_html(), unsafe_allow_html=True)
             st.markdown(filedownload(table_trim(table_dis, 2017), f"{selected_index}_{selected_dis}.xlsx"), unsafe_allow_html=True)
             st.markdown("")
             st.markdown("")
@@ -6021,7 +6152,7 @@ if selected=="Districtes de Barcelona":
             st.markdown("")
             st.markdown("")
             # st.subheader("**DADES TRIMESTRALS MÉS RECENTS**")
-            st.markdown(table_trim(table_dis, 2023, True, False).to_html(), unsafe_allow_html=True)
+            st.markdown(table_trim(table_dis, TAULES_PANTALLA_ANY_INICI, True, False).to_html(), unsafe_allow_html=True)
             st.markdown(filedownload(table_trim(table_dis, 2017, True, False), f"{selected_index}_{selected_dis}.xlsx"), unsafe_allow_html=True)
             st.markdown("")
             st.markdown("")
@@ -6058,7 +6189,7 @@ if selected=="Districtes de Barcelona":
             st.markdown("")
             st.markdown("")
             # st.subheader("**DADES TRIMESTRALS MÉS RECENTS**")
-            st.markdown(table_trim(table_dis, 2023, True, False).to_html(), unsafe_allow_html=True)
+            st.markdown(table_trim(table_dis, TAULES_PANTALLA_ANY_INICI, True, False).to_html(), unsafe_allow_html=True)
             st.markdown(filedownload(table_trim(table_dis, 2017, True, False), f"{selected_index}_{selected_dis}.xlsx"), unsafe_allow_html=True)
             st.markdown("")
             st.markdown("")
@@ -6090,7 +6221,7 @@ if selected=="Districtes de Barcelona":
         st.markdown("")
         st.markdown("")
         # st.subheader("**DADES TRIMESTRALS MÉS RECENTS**")
-        st.markdown(table_trim(table_dis, 2023, True).to_html(), unsafe_allow_html=True)
+        st.markdown(table_trim(table_dis, TAULES_PANTALLA_ANY_INICI, True).to_html(), unsafe_allow_html=True)
         st.markdown(filedownload(table_trim(table_dis, 2014, True), f"{selected_type}_{selected_dis}.xlsx"), unsafe_allow_html=True)
         st.markdown("")
         st.markdown("")
@@ -8058,3 +8189,14 @@ if selected == "Estudi d'Oferta Obra Nova":
 # Enllaç fix a baix a la dreta que porta a l'àncora #dalt del principi (desplaçament suau).
 # Fora de tots els blocs "if selected==...": es renderitza sempre, independentment de la pestanya activa.
 st.markdown('<a href="#dalt" class="boto-amunt" title="Tornar a dalt" aria-label="Tornar a dalt">↑</a>', unsafe_allow_html=True)
+
+############################################################  IDIOMA DEL DOCUMENT ################################################
+# L'index.html que serveix Streamlit declara <html lang="en">: els lectors de pantalla
+# llegien el català amb fonètica anglesa i el navegador oferia traduir la pàgina.
+# st.markdown no executa <script>, així que es fa des d'un component (un iframe del
+# mateix origen que pot tocar el document pare). Va al final de tot perquè el seu
+# contenidor, d'alçada zero, no deixi cap forat enmig del contingut.
+components.html(
+    "<script>try{window.parent.document.documentElement.lang='ca';}catch(e){}</script>",
+    height=0,
+)
