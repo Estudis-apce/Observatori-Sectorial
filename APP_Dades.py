@@ -478,7 +478,20 @@ def st_metric(label=None, value=None, delta=None, **kwargs):
     elif isinstance(value, (float, np.floating)):
         value = _es_num_str(f"{value}")
     if isinstance(delta, str):
-        delta = _es_num_str(delta)
+        # Els punts de crida construeixen el delta com a f"{indicator_year(...)}%".
+        # Hi ha dos casos en què la variació no existeix i la cadena sortia amb un
+        # "nan%" o un "inf%" a la targeta:
+        #   - 0/0: la sèrie és tota zeros (les unifamiliars de Ciutat Vella, que
+        #     no en té cap) -> nan;
+        #   - divisió per zero: l'any anterior va ser 0 i el següent no (Ciutat
+        #     Vella va passar de 0 habitatges iniciats el 2024 a 71 el 2025) ->
+        #     inf. Passa a 16 districtes, 71 territoris i 107 municipis.
+        # En tots dos casos val més no ensenyar cap variació: el nivell hi és i la
+        # taula anual de sota deixa veure d'on ve.
+        if re.match(r"^\s*[-+]?(nan|inf|none)\b", delta, re.IGNORECASE):
+            delta = None
+        else:
+            delta = _es_num_str(delta)
     return st.metric(label, value, delta, **kwargs)
 
 def taula_html_es(df, precision=1) -> str:
@@ -2943,12 +2956,20 @@ def indicator_year(df, df_aux, year, variable, tipus, frequency=None):
     # confondre'l amb un forat genuí enmig de l'històric.
     any_tancat = year in df.index.astype(str).tolist()
     any_obert = (not any_tancat) and (int(year) >= LAST_CLOSED_YEAR)
-    # L'any per defecte (LAST_CLOSED_YEAR) sempre fa servir el càlcul en viu
-    # a partir de mensual/trimestral (més precís que la mitjana anual
-    # precalculada), estigui tancat o no — comportament ja existent abans
-    # d'aquesta funció es toqués; any_obert només HI AFEGEIX els anys
-    # posteriors encara no tancats.
-    usar_calcul_en_viu = any_obert or (year == str(LAST_CLOSED_YEAR))
+    # El càlcul en viu (tidy_present i companyia) retalla TOTS els anys fins a
+    # l'últim trimestre/mes publicat, de manera que compari peres amb peres: és
+    # l'única manera honesta de calcular la variació d'un any que encara va a
+    # mitges. Però per a un any ja TANCAT aquell retall sobra i distorsiona, i
+    # abans s'aplicava igualment sempre que l'any triat fos LAST_CLOSED_YEAR.
+    # El resultat era que la targeta ensenyava el nivell de l'any sencer al
+    # costat d'una variació calculada només amb el primer trimestre, i
+    # contradeia la taula anual que es pinta just a sota: a les rendes de
+    # lloguer del 2025, -4,73% a la targeta contra +1,96% a la taula, amb el
+    # signe canviat, perquè el 2024 va començar alt i baixar i el 2025 va
+    # començar baix i pujar. Ara un any tancat agafa la variació acumulada a
+    # tancament de la seva pròpia taula anual, i només l'any en curs fa servir
+    # el càlcul en viu retallat.
+    usar_calcul_en_viu = any_obert
     if (usar_calcul_en_viu and (frequency=="month") and ((tipus=="var") or (tipus=="diff"))):
         return(round(tidy_present_monthly(df_aux, variable_str, year),2))
     if (usar_calcul_en_viu and (frequency=="month_aux") and (tipus=="var")):
@@ -7709,7 +7730,13 @@ def oferta_matriu_hab_lav(df, pivot_name):
     resum["Total dormitoris"] = resum["Total dormitoris"].astype(int).astype(str) + " habitacions"
     resum["Banys i lavabos"] = resum["Banys i lavabos"].astype(int).astype(str) + " lavabos"
     resum[cols] = resum[cols].map(oferta_format_catala)
-    return resum.pivot(index="Total dormitoris", columns="Banys i lavabos", values=pivot_name)
+    # Les combinacions que no existeixen a l'oferta (p. ex. 1 habitació amb 4
+    # lavabos) sortien com a "NaN": aquestes matrius es pinten amb .to_html()
+    # directe i no passen per format_dataframes(), que és qui posa el guió a la
+    # resta de taules de l'app. El fillna va aquí i no als quatre punts de crida
+    # perquè quedi cobert també si se n'afegeix cap més.
+    return resum.pivot(index="Total dormitoris", columns="Banys i lavabos",
+                       values=pivot_name).fillna("—")
 
 
 @st.cache_data(show_spinner=False)
