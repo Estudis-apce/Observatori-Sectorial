@@ -2673,7 +2673,16 @@ def import_data(trim_limit, month_limit):
 
     return([DT_monthly, DT_terr, DT_terr_y, DT_mun_def, DT_mun_y_def, DT_dis, DT_dis_y, maestro_mun, maestro_dis, censo_2021, rentaneta_mun, censo_2021_dis, rentaneta_dis, idescat_muns, df_mun_idescat, df_pob_ine, DT_mun_y])
 import_data = auto_spinner(import_data)
-DT_monthly, DT_terr, DT_terr_y, DT_mun, DT_mun_y, DT_dis, DT_dis_y, maestro_mun, maestro_dis, censo_2021, rentaneta_mun, censo_2021_dis, rentaneta_dis, idescat_muns, df_mun_idescat, df_pob_ine, DT_mun_y_all = import_data(f"{CURRENT_YEAR_LIMIT}-07-01", f"{CURRENT_YEAR_LIMIT}-07-01")
+# El tall és per any sencer: abans hi havia el mes escrit a mà (-05-01, després
+# -07-01) i calia editar-lo cada trimestre per amagar els períodes que la font
+# encara no ha publicat. Ara d'això se n'encarreguen soles
+# _neteja_periodes_no_publicats() (els 0 de farciment passen a NaN) i
+# _sense_cua_buida() (les files finals sense cap dada es descarten), així que
+# només cal actualitzar CURRENT_YEAR_LIMIT un cop l'any. Comprovat que amb el
+# retall de cua posat les 66 taules de secció acaben igual de netes amb un tall
+# que amb l'altre, i que només 4 canvien d'últim període (Euríbor, tipus
+# d'hipoteques i costos, que publiquen abans que la resta).
+DT_monthly, DT_terr, DT_terr_y, DT_mun, DT_mun_y, DT_dis, DT_dis_y, maestro_mun, maestro_dis, censo_2021, rentaneta_mun, censo_2021_dis, rentaneta_dis, idescat_muns, df_mun_idescat, df_pob_ine, DT_mun_y_all = import_data(f"{CURRENT_YEAR_LIMIT}-12-31", f"{CURRENT_YEAR_LIMIT}-12-31")
 
 
 # ========== ESTUDI D'OFERTA DE NOVA CONSTRUCCIÓ (font: Atlas) ==========
@@ -2804,11 +2813,32 @@ def tidy_Catalunya_m(data_ori, columns_sel, fecha_ini, fecha_fin, columns_output
     output_data = output_data[(output_data["Month"]<=output_data['Month'].iloc[-1])]
     return(output_data.drop(["Data", "Month"], axis=1))
 
+def _sense_cua_buida(df):
+    """Descarta les files del final que no tenen cap dada a cap columna de valor.
+
+    Els períodes que encara no s'han publicat arriben al JSON com a fila buida.
+    Si no es treuen, es propaguen a tot arreu: columnes de guions a les taules i,
+    sobretot, espai mort a la dreta dels gràfics, perquè l'eix continua tenint la
+    categoria encara que no hi hagi cap punt. Mesurat a la web desplegada: 5 dels
+    8 gràfics de Catalunya/Producció acabaven amb dues categories buides (l'eix
+    arribava al 2026T2 i l'últim punt amb dada era el 2025T4).
+
+    És també el que permet deixar de retallar les dades per mes a import_data():
+    un cop les cues buides es descarten soles, el tall pot ser per any sencer."""
+    valor = [c for c in df.columns if c not in ("Data", "Fecha", "Trimestre", "Any")]
+    if df.empty or not valor:
+        return df
+    te_dada = df[valor].notna().any(axis=1).to_numpy()
+    if not te_dada.any():
+        return df
+    return df.iloc[:int(np.nonzero(te_dada)[0][-1]) + 1]
+
+
 def tidy_Catalunya(data_ori, columns_sel, fecha_ini, fecha_fin, columns_output):
     output_data = data_ori[["Trimestre"] + columns_sel][(data_ori["Fecha"]>=fecha_ini) & (data_ori["Fecha"]<=fecha_fin)]
     output_data.columns = ["Trimestre"] + columns_output
 
-    return(output_data.set_index("Trimestre").drop("Data", axis=1))
+    return(_sense_cua_buida(output_data.set_index("Trimestre").drop("Data", axis=1)))
 
 def tidy_Catalunya_anual(data_ori, columns_sel, fecha_ini, fecha_fin, columns_output):
     output_data = data_ori[columns_sel][(data_ori["Fecha"]>=fecha_ini) & (data_ori["Fecha"]<=fecha_fin)]
@@ -2820,7 +2850,7 @@ def tidy_Catalunya_mensual(data_ori, columns_sel, fecha_ini, fecha_fin, columns_
     output_data = data_ori[["Fecha"] + columns_sel][(data_ori["Fecha"]>=fecha_ini) & (data_ori["Fecha"]<=fecha_fin)]
     output_data.columns = ["Fecha"] + columns_output
     output_data["Fecha"] = output_data["Fecha"].astype(str)
-    return(output_data.set_index("Fecha"))
+    return(_sense_cua_buida(output_data.set_index("Fecha")))
 
 def tidy_present(data_ori, columns_sel, year):
     output_data = data_ori[data_ori[columns_sel]!=0][["Trimestre"] + [columns_sel]].dropna()
@@ -2834,7 +2864,18 @@ def tidy_present(data_ori, columns_sel, year):
     return(output_data.values[0][0]) if not output_data.empty else np.nan
 
 def tidy_present_monthly(data_ori, columns_sel, year):
-    output_data = data_ori[["Fecha"] + [columns_sel]]
+    # Filtre de mesos propi, igual que tidy_present_monthly_aux(): abans depenia
+    # que qui la cridés li passés una taula ja retallada (tidy_Catalunya_m sí que
+    # ho fa, tidy_Catalunya_mensual no). Amb una taula sense retallar comparava
+    # els mesos publicats de l'any en curs contra els dotze de l'any anterior:
+    # mesurat amb el consum de ciment, -48% en lloc de +10%. Per a qui ja
+    # retallava, tornar-ho a fer no canvia res.
+    output_data = data_ori[["Fecha"] + [columns_sel]].dropna(axis=0)
+    if output_data.empty:
+        return np.nan
+    output_data["month_aux"] = output_data["Fecha"].dt.month
+    output_data = output_data[(output_data["month_aux"]<=output_data['month_aux'].iloc[-1])]
+    output_data = output_data.drop("month_aux", axis=1)
     output_data["Any"] = output_data["Fecha"].dt.year
     output_data = output_data.drop_duplicates(["Fecha", columns_sel])
     output_data = output_data.set_index("Fecha").groupby("Any").sum().pct_change().mul(100).reset_index()
@@ -2851,15 +2892,31 @@ def tidy_present_monthly_aux(data_ori, columns_sel, year):
     output_data = output_data[output_data["Any"]==int(year)].set_index("Any")
     return(output_data.values[0][0]) if not output_data.empty else np.nan
 
-def tidy_present_monthly_diff(data_ori, columns_sel, year):
-    output_data = data_ori[["Fecha"] + columns_sel].dropna(axis=0)
-    output_data["month_aux"] = output_data["Fecha"].dt.month
-    output_data = output_data[(output_data["month_aux"]<=output_data['month_aux'].iloc[-1])]
-    output_data["Any"] = output_data["Fecha"].dt.year
-    output_data = output_data.drop_duplicates(["Fecha"] + columns_sel)
-    output_data = output_data.set_index("Fecha").groupby("Any").mean().diff().mul(100).reset_index()
-    output_data = output_data[output_data["Any"]==int(year)].set_index("Any")
-    return(output_data.values[0][0]) if not output_data.empty else np.nan
+def tidy_diff_punt_a_punt(data_ori, columns_sel, year):
+    """Diferència en punts bàsics entre l'ÚLTIM MES publicat de `year` i el mateix
+    mes de l'any anterior. És la lectura que té sentit per a un tipus d'interès:
+    on ha arribat el tipus, no la mitjana d'un any contra la mitjana de l'altre.
+
+    Abans es feia amb mitjanes (tidy_present_monthly_diff per a l'any en curs i la
+    diferència de mitjanes anuals per als tancats) i el número podia sortir amb el
+    signe canviat: l'Euríbor a 3 mesos del 2026 donava -9,49 p.b. quan el juliol
+    del 2026 estava 43,90 p.b. per damunt del juliol del 2025.
+
+    Serveix igual per a un any tancat, on l'últim mes és el desembre: desembre
+    contra desembre."""
+    col = columns_sel[0] if isinstance(columns_sel, list) else columns_sel
+    if "Fecha" not in getattr(data_ori, "columns", []) or col not in data_ori.columns:
+        return np.nan
+    serie = data_ori[["Fecha", col]].dropna()
+    actual = serie[serie["Fecha"].dt.year == int(year)]
+    if actual.empty:
+        return np.nan
+    mes = actual["Fecha"].iloc[-1].month
+    anterior = serie[(serie["Fecha"].dt.year == int(year) - 1) & (serie["Fecha"].dt.month == mes)]
+    if anterior.empty:
+        return np.nan
+    return (float(actual[col].iloc[-1]) - float(anterior[col].iloc[0])) * 100
+
 
 def _subperiodes_any(data_ori, columns_sel, year):
     """Valors subanuals (trimestres o mesos) de `columns_sel` per a `year`, tant si
@@ -2994,12 +3051,16 @@ def indicator_year(df, df_aux, year, variable, tipus, frequency=None):
     # tancament de la seva pròpia taula anual, i només l'any en curs fa servir
     # el càlcul en viu retallat.
     usar_calcul_en_viu = any_obert
-    if (usar_calcul_en_viu and (frequency=="month") and ((tipus=="var") or (tipus=="diff"))):
+    # Els "diff" són només les quatre targetes de tipus d'interès d'Espanya, i van
+    # totes per la comparació punt a punt, tant si l'any és obert com tancat: el
+    # que interessa d'un tipus és on ha arribat, no la mitjana de l'any. Amb un any
+    # tancat, l'últim mes és el desembre, o sigui desembre contra desembre.
+    if tipus == "diff" and frequency in ("month", "month_aux"):
+        return(round(tidy_diff_punt_a_punt(df_aux, variable_list, year),2))
+    if (usar_calcul_en_viu and (frequency=="month") and (tipus=="var")):
         return(round(tidy_present_monthly(df_aux, variable_str, year),2))
     if (usar_calcul_en_viu and (frequency=="month_aux") and (tipus=="var")):
         return(round(tidy_present_monthly_aux(df_aux, variable_list, year),2))
-    if (usar_calcul_en_viu and (frequency=="month_aux") and ((tipus=="diff"))):
-        return(round(tidy_present_monthly_diff(df_aux, variable_list, year),2))
     if (usar_calcul_en_viu and ((tipus=="var") or (tipus=="diff")) and (df_aux.index.name == "Trimestre")):
         # tidy_present espera una taula trimestral (índex "Trimestre"). Si
         # frequency no s'ha indicat però df_aux és en realitat mensual
@@ -3583,11 +3644,12 @@ def table_trim(data_ori, year_ini, rounded=False, formated=True):
         numeric_columns = data_ori.select_dtypes(include=['float64', 'int64']).columns
         data_ori[numeric_columns] = _elementwise(data_ori[numeric_columns], lambda x: round(x, 1))
     output_data = data_ori.set_index(["Any", "Trimestre"]).T#.dropna(axis=1, how="all")
-    last_column_contains_all_nans = output_data.iloc[:, -1].isna().all()
-    if last_column_contains_all_nans:
+    # Es descarten TOTES les columnes buides del final, no només l'última: si en
+    # queden dues seguides (passa quan la font encara no ha publicat el trimestre),
+    # abans se n'esborrava una i l'altra sortia com una columna sencera de guions.
+    while output_data.shape[1] and output_data.iloc[:, -1].isna().all():
         output_data = output_data.iloc[:, :-1]
-    else:
-        output_data = output_data.copy()
+    output_data = output_data.copy()
 
     if formated==True:
         return(format_dataframes(output_data, True))

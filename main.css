@@ -625,6 +625,11 @@ iframe[title="streamlit_folium.st_folium"] {
    de les taules en fer scroll i, segons l'amplada, el botó "Informe de Mercat i
    Sectorial" del menú principal. Dins del flux normal ja no tapa res; l'interruptor
    es fa servir un cop i, per tornar-hi, el botó "amunt" ja porta al principi.
+
+   Va sense fons: la píndola blanca (fons, vora, ombra i cantonades arrodonides)
+   existia per fer-lo llegible quan flotava per damunt del contingut. Ara que va
+   dins del flux ja no cal, i queden només l'interruptor, el sol, la lluna i
+   l'interrogant sobre el fons de la pàgina.
    ========================================================================== */
 .element-container:has(.theme-toggle-anchor) + .element-container {
   width: fit-content !important;
@@ -632,13 +637,9 @@ iframe[title="streamlit_folium.st_folium"] {
   margin-right: 0;
   /* Mateixa compensació que la targeta de capçalera: Streamlit posa un gap de 16 px
      entre cada element de la columna, inclosos els divs àncora buits que hi ha
-     abans, i sense això la píndola deixava una franja morta a dalt de tot. */
+     abans, i sense això l'interruptor deixava una franja morta a dalt de tot. */
   margin-top: -34px;
-  background: var(--app-surface-solid);
-  border: 1px solid var(--app-border);
-  border-radius: 999px;
   padding: 2px 10px;
-  box-shadow: 0 2px 8px var(--app-shadow);
 }
 /* Streamlit dona width:100% (via l'ample del contenidor de pàgina) al
    checkbox/toggle intern per defecte: forcem que s'ajusti al contingut
