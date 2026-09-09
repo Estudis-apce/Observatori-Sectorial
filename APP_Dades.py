@@ -1434,7 +1434,12 @@ def generar_pdf_municipi_tot(
         except Exception:
             kpis_pdf.append((label, "No disponible", None))
             return
-        var_str = f"{var}%" if pd.notna(var) else None
+        # isfinite i no només notna: quan l'any anterior va ser 0 la variació és
+        # infinita (107 municipis passen de 0 habitatges iniciats el 2024 a algun
+        # el 2025) i pd.notna(inf) és True, o sigui que el PDF hauria escrit
+        # "inf%". A la web ho para st_metric(); aquí els KPI es construeixen a
+        # part i no hi passen.
+        var_str = f"{var}%" if pd.notna(var) and np.isfinite(var) else None
         kpis_pdf.append((f"{label} ({year})", f"{val:,.0f}".replace(",", "."), var_str))
 
     # Producció — totals + tipologies
@@ -2858,7 +2863,7 @@ def tidy_present(data_ori, columns_sel, year):
     output_data = output_data[(output_data["Trimestre_aux"]<=output_data['Trimestre_aux'].iloc[-1])]
     output_data["Any"] = output_data["Trimestre"].str[0:4]
     output_data = output_data.drop(["Trimestre", "Trimestre_aux"], axis=1)
-    output_data = output_data.groupby("Any").mean().pct_change().mul(100).reset_index()
+    output_data = output_data.groupby("Any").mean().pct_change(fill_method=None).mul(100).reset_index()
     output_data = output_data[output_data["Any"]==str(year)]
     output_data = output_data.set_index("Any")
     return(output_data.values[0][0]) if not output_data.empty else np.nan
@@ -2878,7 +2883,7 @@ def tidy_present_monthly(data_ori, columns_sel, year):
     output_data = output_data.drop("month_aux", axis=1)
     output_data["Any"] = output_data["Fecha"].dt.year
     output_data = output_data.drop_duplicates(["Fecha", columns_sel])
-    output_data = output_data.set_index("Fecha").groupby("Any").sum().pct_change().mul(100).reset_index()
+    output_data = output_data.set_index("Fecha").groupby("Any").sum().pct_change(fill_method=None).mul(100).reset_index()
     output_data = output_data[output_data["Any"]==int(year)].set_index("Any")
     return(output_data.values[0][0]) if not output_data.empty else np.nan
 
@@ -2888,7 +2893,7 @@ def tidy_present_monthly_aux(data_ori, columns_sel, year):
     output_data = output_data[(output_data["month_aux"]<=output_data['month_aux'].iloc[-1])]
     output_data["Any"] = output_data["Fecha"].dt.year
     output_data = output_data.drop_duplicates(["Fecha"] + columns_sel)
-    output_data = output_data.set_index("Fecha").groupby("Any").sum().pct_change().mul(100).reset_index()
+    output_data = output_data.set_index("Fecha").groupby("Any").sum().pct_change(fill_method=None).mul(100).reset_index()
     output_data = output_data[output_data["Any"]==int(year)].set_index("Any")
     return(output_data.values[0][0]) if not output_data.empty else np.nan
 
@@ -3084,7 +3089,17 @@ def indicator_year(df, df_aux, year, variable, tipus, frequency=None):
             return round(valor,2) if pd.notna(valor) else np.nan
         return np.nan
     if tipus=="var":
-        df = df[variable_str].pct_change().mul(100)
+        # fill_method=None a totes les crides a pct_change() de l'app: per defecte
+        # pandas omple els NaN amb el valor anterior ABANS de calcular, o sigui que
+        # un forat a la sèrie feia que la variació es calculés contra una dada que
+        # no era la de l'any anterior. Passa a 548 columnes municipals (sobretot
+        # rendes de lloguer de pobles petits, que van a salts), 75 de territorials
+        # i 25 de districte: si un poble té renda el 2020, res el 2021 i el 2022, i
+        # dada el 2023, la variació del 2023 sortia calculada contra la del 2020
+        # com si fos l'any anterior. Ara surt NaN, que és el que toca: no és
+        # comparable. A més, pandas ja avisa que canviarà aquest comportament per
+        # defecte, i així l'app no canviarà de resultat sola en una actualització.
+        df = df[variable_str].pct_change(fill_method=None).mul(100)
         df = df[df.index==year]
         return(round(df.values[0],2)) if not df.empty else np.nan
     if tipus=="diff":
@@ -4078,13 +4093,13 @@ if selected == "Espanya":
             # que sí que tenen sèrie anual.
             table_espanya_m = tidy_Catalunya_mensual(DT_monthly, ["Fecha", "IPC_Nacional_x", "IPC_subyacente", "IGC_Nacional", "IRAV_Nacional"], f"{str(min_year)}-01-01", date_max_ipc,["Data","IPC (Base 2021)","IPC subjacent", "IGC", "IRAV"])
 
-            table_espanya_m["Inflació"] = table_espanya_m["IPC (Base 2021)"].pct_change(12).mul(100)
+            table_espanya_m["Inflació"] = table_espanya_m["IPC (Base 2021)"].pct_change(12, fill_method=None).mul(100)
             table_espanya_m["Inflació subjacent"] = round(table_espanya_m["IPC subjacent"],1)
             table_espanya_m["Índex de Garantia de Competitivitat (IGC)"] = round(table_espanya_m["IGC"],1)
             table_espanya_m["Índex de Referència d'Actualització de Rendes (IRAV)"] = round(table_espanya_m["IRAV"],2)
             table_espanya_m = table_espanya_m.drop(["IPC subjacent", "IGC", "IRAV"], axis=1)
             table_espanya_y = tidy_Catalunya_anual(DT_terr_y, ["Fecha","IPC_Nacional_x", "IPC_subyacente", "IGC_Nacional"], min_year, annual_upper_bound("IPC_Nacional_x"),["Any", "IPC (Base 2021)","IPC subjacent", "IGC"])
-            table_espanya_y["Inflació"] = table_espanya_y["IPC (Base 2021)"].pct_change(1).mul(100)
+            table_espanya_y["Inflació"] = table_espanya_y["IPC (Base 2021)"].pct_change(1, fill_method=None).mul(100)
             table_espanya_y["Inflació subjacent"] = round(table_espanya_y["IPC subjacent"],1)
             table_espanya_y["Índex de Garantia de Competitivitat (IGC)"] = round(table_espanya_y["IGC"],1)
             table_espanya_y = table_espanya_y.drop(["IPC subjacent", "IGC"], axis=1)
@@ -4159,7 +4174,7 @@ if selected == "Espanya":
             with left:
                 st_plotly_chart(line_plotly(table_espanya_q, ["Consum de ciment"], "Consum de ciment (Milers T.)", "Milers de T."), use_container_width=True, responsive=True)
             with right:
-                st_plotly_chart(bar_plotly(table_espanya_y.pct_change(1).mul(100).dropna(axis=0), ["Consum de ciment"], "Variació anual del consum de ciment (%)", "%", 2012), use_container_width=True, responsive=True)     
+                st_plotly_chart(bar_plotly(table_espanya_y.pct_change(1, fill_method=None).mul(100).dropna(axis=0), ["Consum de ciment"], "Variació anual del consum de ciment (%)", "%", 2012), use_container_width=True, responsive=True)     
         if selected_index=="Tipus d'interès":
             min_year=2008
             st.subheader("TIPUS D'INTERÈS I POLÍTICA MONETÀRIA")
@@ -4524,7 +4539,7 @@ if selected == "Catalunya":
             with left:
                 st_plotly_chart(line_plotly(table_catalunya_q, ["Edifici renda normal entre mitjaneres", "Unifamiliar de dos plantes entre mitjaneres", "Nau industrial", "Edifici d’oficines entre mitjaneres"], "Costos de construcció per tipologia (€/m\u00b2)", "€/m\u00b2 construït"), use_container_width=True, responsive=True)
             with right:
-                st_plotly_chart(line_plotly(table_catalunya_q.pct_change(4).mul(100).iloc[4:,:], ["Edifici renda normal entre mitjaneres", "Unifamiliar de dos plantes entre mitjaneres", "Nau industrial", "Edifici d’oficines entre mitjaneres"], "Costos de construcció per tipologia (% var. anual)", "%"), use_container_width=True, responsive=True)
+                st_plotly_chart(line_plotly(table_catalunya_q.pct_change(4, fill_method=None).mul(100).iloc[4:,:], ["Edifici renda normal entre mitjaneres", "Unifamiliar de dos plantes entre mitjaneres", "Nau industrial", "Edifici d’oficines entre mitjaneres"], "Costos de construcció per tipologia (% var. anual)", "%"), use_container_width=True, responsive=True)
 
         if selected_index=="Consum de Ciment":
             st.subheader("CONSUM DE CIMENT")
@@ -4551,7 +4566,7 @@ if selected == "Catalunya":
             with left:
                 st_plotly_chart(line_plotly(table_catalunya_q, ["Consum de ciment"], "Consum de ciment (Milers T.)", "Milers de T."), use_container_width=True, responsive=True)
             with right:
-                st_plotly_chart(bar_plotly(table_catalunya_y.pct_change(1).mul(100).dropna(axis=0), ["Consum de ciment"], "Variació anual del consum de ciment (Milers T.)", "%", 2012), use_container_width=True, responsive=True)
+                st_plotly_chart(bar_plotly(table_catalunya_y.pct_change(1, fill_method=None).mul(100).dropna(axis=0), ["Consum de ciment"], "Variació anual del consum de ciment (Milers T.)", "%", 2012), use_container_width=True, responsive=True)
         if selected_index=="Hipoteques":
             st.subheader("IMPORT I NOMBRE D'HIPOTEQUES INSCRITES EN ELS REGISTRES DE PROPIETAT")
             st.markdown(f'<div class="custom-box">ANY {selected_year_n}</div>', unsafe_allow_html=True)
