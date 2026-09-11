@@ -707,6 +707,18 @@ html, body, [data-testid="stAppViewContainer"], section.main { scroll-behavior: 
   z-index: 1000;
 }
 .boto-amunt:hover { background: #E3A94C !important; color: #ffffff !important; }
+/* Només es veu quan s'ha baixat: amb la pàgina a dalt de tot no serveix de res i
+   tapa la cantonada inferior dreta, just a sobre dels gràfics. La classe
+   .amunt-oculta la posa i la treu el script del final d'APP_Dades.py segons el
+   desplaçament. Es fa amagant (classe posada) en lloc de mostrant: si el script
+   no arribés a executar-se, el botó es queda sempre visible com fins ara, que és
+   el comportament segur. Va sobre el propi botó i amb !important perquè les
+   regles de Streamlit no el tornin a fer visible. */
+.boto-amunt.amunt-oculta {
+  opacity: 0 !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
+}
 @media (max-width: 480px) {
   .boto-amunt { bottom: 14px; right: 14px; width: 38px; height: 38px; font-size: 18px; }
 }

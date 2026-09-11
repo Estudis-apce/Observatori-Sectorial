@@ -7,6 +7,8 @@ from typing import List, Tuple, Optional, Iterable
 import base64
 import io
 import json
+import sys
+import traceback
 import os
 import re
 
@@ -822,7 +824,15 @@ def _maybe_flatten_index_and_cols(df: pd.DataFrame) -> pd.DataFrame:
         out.columns = new_cols
     return out
 
-def _styled_table_from_df(df, max_rows: Optional[int] = None, max_cols: int = 12) -> Table:
+def _styled_table_from_df(df, max_rows: Optional[int] = None) -> Table:
+    """Taula del PDF. NO es retallen columnes: abans es quedava amb les 12
+    primeres, que són les MÉS ANTIGUES, i com que les taules trimestrals de la
+    fitxa comencen el 2023 i ja arriben al 2026T1 (13 columnes), el trimestre més
+    recent desapareixia del PDF sense cap avís en 209 dels 212 municipis amb dada
+    -- mentre que a la web sí que es veia. La pàgina és de 33,87 cm amb marges
+    d'1,75, o sigui 30,37 cm útils: amb 14 columnes toquen a 2,17 cm cadascuna i
+    hi caben de sobra; per si de cas, a partir de 12 columnes s'acota el cos de
+    lletra i el coixí lateral en lloc de retallar res."""
     if isinstance(df, str) and "<table" in df.lower():
         try:
             lst = pd.read_html(df)
@@ -841,15 +851,16 @@ def _styled_table_from_df(df, max_rows: Optional[int] = None, max_cols: int = 12
 
 
     if max_rows is not None:
-        df = df.iloc[:max_rows, :max_cols]
-    else:
-        df = df.iloc[:, :max_cols]
+        df = df.iloc[:max_rows, :]
 
     data = [[""] + [str(c) for c in df.columns]]
     for idx, row in df.iterrows():
         data.append([str(idx)] + [str(v) for v in row.values])
 
     tbl = Table(data, repeatRows=1)
+    # Taules amples: menys cos de lletra i menys coixí lateral, en lloc de tallar.
+    n_col = len(data[0])
+    cos_cap, cos_cos, coixi = (10, 9, 7) if n_col <= 12 else ((8.5, 7.5, 4) if n_col <= 16 else (7.5, 6.5, 3))
 
     # L'ample extra només s'aplica a taules amb poques columnes (fins a 6, incloent
     # la d'etiquetes): en una taula petita queda més "plena" i estètica, però en
@@ -868,17 +879,17 @@ def _styled_table_from_df(df, max_rows: Optional[int] = None, max_cols: int = 12
         ('BACKGROUND', (0,0), (-1,0), _hex_to_rl(CSS_COLORS["primary"])),
         ('TEXTCOLOR', (0,0), (-1,0), rl_colors.white),
         ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
-        ('FONTSIZE', (0,0), (-1,0), 10),
+        ('FONTSIZE', (0,0), (-1,0), cos_cap),
         ('ALIGN', (0,0), (-1,0), 'CENTER'),
-        ('FONTSIZE', (0,1), (-1,-1), 9),
+        ('FONTSIZE', (0,1), (-1,-1), cos_cos),
         ('TEXTCOLOR', (0,1), (-1,-1), _hex_to_rl(CSS_COLORS["text"])),
         ('ALIGN', (0,1), (-1,-1), 'CENTER'),
         ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
         ('GRID', (0,0), (-1,-1), 0.4, _hex_to_rl(CSS_COLORS["bg"])),
         ('LINEBELOW', (0,0), (-1,0), 1, _hex_to_rl(CSS_COLORS["brand_dark"])),
         ('ROWBACKGROUNDS', (0,1), (-1,-1), [_hex_to_rl(CSS_COLORS["bg"]), _hex_to_rl(CSS_COLORS["accent"])]),
-        ('LEFTPADDING', (0,0), (-1,-1), 7),
-        ('RIGHTPADDING', (0,0), (-1,-1), 7),
+        ('LEFTPADDING', (0,0), (-1,-1), coixi),
+        ('RIGHTPADDING', (0,0), (-1,-1), coixi),
         ('TOPPADDING', (0,0), (-1,-1), 5),
         ('BOTTOMPADDING', (0,0), (-1,-1), 5),
     ]))
@@ -1236,7 +1247,7 @@ def build_location_pdf_ordered(
                 story.append(hdr)
                 try:
                     df_disp = df.data if hasattr(df, "data") else df
-                    tbl = _styled_table_from_df(df_disp, max_rows=None, max_cols=12)
+                    tbl = _styled_table_from_df(df_disp, max_rows=None)
                     story.append(tbl)
                 except Exception:
                     story.append(Paragraph("[No s'ha pogut mostrar la taula]", styles["Small"]))
@@ -1352,6 +1363,24 @@ def _st_metric_pick(sel_df: pd.DataFrame, nombre_largo: str):
         st_metric(label=f"{nombre_largo} ({year})", value=int(val))
 
 # ========== GENERADOR — MUNICIPI (ORDEN COHERENTE) ==========
+def _log_pdf():
+    """Deixa constància al log del SERVIDOR de per què un bloc del PDF no ha sortit.
+
+    Els blocs de la fitxa van dins d'un try/except a propòsit: si el municipi no
+    surt a l'estudi d'oferta, la diapositiva simplement no hi és i el lector no
+    ha de llegir cap excusa. El que no es podia distingir era això -- "no hi ha
+    dada, ometo" -- d'un error de programació que esborrava en silenci una secció
+    que sí que hi hauria de ser. Una línia per bloc omès, només al log; el PDF
+    surt exactament igual."""
+    try:
+        exc = sys.exc_info()[1]
+        tb = traceback.extract_tb(sys.exc_info()[2])
+        lloc = f"línia {tb[-1].lineno}" if len(tb) else "?"
+        print(f"[PDF] bloc omès ({lloc}): {type(exc).__name__}: {exc}", file=sys.stderr)
+    except Exception:
+        pass
+
+
 def generar_pdf_municipi_tot(
     selected_mun: str,
     # --- Producció
@@ -1406,15 +1435,27 @@ def generar_pdf_municipi_tot(
         last_available_year(), però per a les taules ja tidificades per
         municipi que _safe_add_kpi ja rep (índex 'Trimestre'/'Any', nom de
         columna amigable en lloc del cru amb prefix de last_available_year)."""
+        any_anual = None
+        if table_y is not None and col in table_y.columns:
+            valid_y = table_y[col].dropna()
+            if not valid_y.empty:
+                any_anual = str(valid_y.index[-1])
         if table_q is not None and col in table_q.columns:
             valid = table_q[col].dropna()
             if not valid.empty:
-                return str(valid.index[-1])[:4]
-        if table_y is not None and col in table_y.columns:
-            valid = table_y[col].dropna()
-            if not valid.empty:
-                return str(valid.index[-1])
-        return None
+                any_trim = str(valid.index[-1])[:4]
+                # Un any que encara no és a la taula anual és un any en curs. La
+                # targeta només l'ensenya si ja té dos trimestres publicats: amb un
+                # de sol, la fitxa deia "Compravendes (2026): 35" per un trimestre
+                # d'Abrera al costat dels 178 de l'any 2025 sencer, i es llegia com
+                # un desplome. Amb el segon trimestre hi torna sola, ja com a
+                # acumulat del semestre. Les taules no hi tenen res a veure: la
+                # trimestral s'actualitza amb un sol trimestre i l'anual només
+                # incorpora l'any quan la font l'ha publicat sencer.
+                es_any_en_curs = any_anual is None or any_trim > any_anual
+                if not es_any_en_curs or len(_subperiodes_any(table_q, col, any_trim)) >= 2:
+                    return any_trim
+        return any_anual
 
     def _safe_add_kpi(table_y, table_q, col, label):
         # Abans es forçava year=CURRENT_YEAR_LIMIT: si aquest municipi/indicador
@@ -1487,7 +1528,7 @@ def generar_pdf_municipi_tot(
                             delta
                         ))
     except Exception:
-        pass
+        _log_pdf()
 
     # Compravendes
     _safe_add_kpi(table_mun_tr_y, table_mun_tr, "Compravendes d'habitatge total", "Compravendes")
@@ -1532,7 +1573,7 @@ def generar_pdf_municipi_tot(
             # Añadirlos al final del listado de KPIs
             kpis_pdf.extend(parc_kpis)
     except Exception:
-        pass
+        _log_pdf()
     try:
         df_long = _map_df_mun_idescat_basic(df_mun_idescat, selected_mun)
         if df_long is not None and not df_long.empty:
@@ -1746,7 +1787,7 @@ def generar_pdf_municipi_tot(
                 )
             ))
     except Exception:
-        pass
+        _log_pdf()
     if items_comp_prov:
         sections.append(("Comparativa territorial", items_comp_prov))
 
@@ -1759,7 +1800,7 @@ def generar_pdf_municipi_tot(
              table_trim(table_mun_prod, TABLE_TRIM_START_YEAR))
         ))
     except Exception:
-        pass
+        _log_pdf()
     try:
         items_produccio.append((
             "table",
@@ -1767,7 +1808,7 @@ def generar_pdf_municipi_tot(
              table_year(table_mun_prod_y, TABLE_ANNUAL_START_YEAR, rounded=False))
         ))
     except Exception:
-        pass
+        _log_pdf()
     try:
         items_produccio.append((
             "fig",
@@ -1776,7 +1817,7 @@ def generar_pdf_municipi_tot(
                       start_year=SERIES_START_YEAR))
         ))
     except Exception:
-        pass
+        _log_pdf()
     try:
         items_produccio.append((
             "fig",
@@ -1785,7 +1826,7 @@ def generar_pdf_municipi_tot(
                      start_year=SERIES_START_YEAR, force_all_xticks=True))
         ))
     except Exception:
-        pass
+        _log_pdf()
     # Tipologies
     try:
         typ_ini_cols = selected_columns_ini
@@ -1799,7 +1840,7 @@ def generar_pdf_municipi_tot(
                       start_year=SERIES_START_YEAR, palette=typ_ini_palette))
         ))
     except Exception:
-        pass
+        _log_pdf()
 
     try:
         typ_fin_cols = selected_columns_fin
@@ -1813,7 +1854,7 @@ def generar_pdf_municipi_tot(
                       start_year=SERIES_START_YEAR, palette=typ_fin_palette))
         ))
     except Exception:
-        pass
+        _log_pdf()
 
     # Per superfície
     try:
@@ -1825,7 +1866,7 @@ def generar_pdf_municipi_tot(
                       palette=PLOTLY_PALETTE + ["#9aa0a6"]))
         ))
     except Exception:
-        pass
+        _log_pdf()
     try:
         items_produccio.append((
             "fig",
@@ -1835,7 +1876,7 @@ def generar_pdf_municipi_tot(
                       palette=PLOTLY_PALETTE + ["#9aa0a6"]))
         ))
     except Exception:
-        pass
+        _log_pdf()
     if items_produccio:
         sections.append(("Producció", items_produccio))
 # --------- HABITATGE PROTEGIT (HPO) ---------
@@ -1880,7 +1921,7 @@ def generar_pdf_municipi_tot(
                     ))
                 ))
     except Exception:
-        pass
+        _log_pdf()
 
     if items_vpo:
         sections.append(("Habitatge protegit (HPO)", items_vpo))
@@ -1894,7 +1935,7 @@ def generar_pdf_municipi_tot(
              table_trim(table_mun_tr, TABLE_TRIM_START_YEAR))
         ))
     except Exception:
-        pass
+        _log_pdf()
     try:
         items_comp.append((
             "table",
@@ -1902,7 +1943,7 @@ def generar_pdf_municipi_tot(
              table_year(table_mun_tr_y, TABLE_ANNUAL_START_YEAR, rounded=False))
         ))
     except Exception:
-        pass
+        _log_pdf()
     comp_cols = [
         "Compravendes d'habitatge total",
         "Compravendes d'habitatge de segona mà",
@@ -1917,7 +1958,7 @@ def generar_pdf_municipi_tot(
                       start_year=SERIES_START_YEAR, palette=comp_palette))
         ))
     except Exception:
-        pass
+        _log_pdf()
     try:
         items_comp.append((
             "fig",
@@ -1926,7 +1967,7 @@ def generar_pdf_municipi_tot(
                      start_year=SERIES_START_YEAR, palette=comp_palette, force_all_xticks=True))
         ))
     except Exception:
-        pass
+        _log_pdf()
     if items_comp:
         sections.append(("Compravendes", items_comp))
 
@@ -1939,7 +1980,7 @@ def generar_pdf_municipi_tot(
              table_trim(table_mun_pr, TABLE_TRIM_START_YEAR))
         ))
     except Exception:
-        pass
+        _log_pdf()
     try:
         items_preus.append((
             "table",
@@ -1947,7 +1988,7 @@ def generar_pdf_municipi_tot(
              table_year(table_mun_pr_y, TABLE_ANNUAL_START_YEAR, rounded=False))
         ))
     except Exception:
-        pass
+        _log_pdf()
     preus_cols = [
         "Preu d'habitatge total",
         "Preu d'habitatge de segona mà",
@@ -1962,7 +2003,7 @@ def generar_pdf_municipi_tot(
                       start_year=SERIES_START_YEAR, palette=preus_palette))
         ))
     except Exception:
-        pass
+        _log_pdf()
     try:
         items_preus.append((
             "fig",
@@ -1971,7 +2012,7 @@ def generar_pdf_municipi_tot(
                      start_year=SERIES_START_YEAR, palette=preus_palette, force_all_xticks=True))
         ))
     except Exception:
-        pass
+        _log_pdf()
     if items_preus:
         sections.append(("Preus", items_preus))
 
@@ -1984,7 +2025,7 @@ def generar_pdf_municipi_tot(
              table_trim(table_mun_sup, TABLE_TRIM_START_YEAR))
         ))
     except Exception:
-        pass
+        _log_pdf()
     try:
         items_sup.append((
             "table",
@@ -1992,7 +2033,7 @@ def generar_pdf_municipi_tot(
              table_year(table_mun_sup_y, TABLE_ANNUAL_START_YEAR, rounded=False))
         ))
     except Exception:
-        pass
+        _log_pdf()
     sup_cols = [
         "Superfície mitjana total",
         "Superfície mitjana d'habitatge de segona mà",
@@ -2007,7 +2048,7 @@ def generar_pdf_municipi_tot(
                       start_year=SERIES_START_YEAR, palette=sup_palette))
         ))
     except Exception:
-        pass
+        _log_pdf()
     try:
         items_sup.append((
             "fig",
@@ -2016,7 +2057,7 @@ def generar_pdf_municipi_tot(
                      start_year=SERIES_START_YEAR, palette=sup_palette, force_all_xticks=True))
         ))
     except Exception:
-        pass
+        _log_pdf()
     if items_sup:
         sections.append(("Superfície", items_sup))
 
@@ -2029,7 +2070,7 @@ def generar_pdf_municipi_tot(
              table_trim(table_mun_llog, TABLE_TRIM_START_YEAR))
         ))
     except Exception:
-        pass
+        _log_pdf()
     try:
         items_llog.append((
             "table",
@@ -2037,7 +2078,7 @@ def generar_pdf_municipi_tot(
              table_year(table_mun_llog_y, TABLE_ANNUAL_START_YEAR, rounded=False))
         ))
     except Exception:
-        pass
+        _log_pdf()
     # Doble eje (trimestral)
     if ("Nombre de contractes de lloguer" in getattr(table_mun_llog, "columns", [])) and \
        ("Rendes mitjanes de lloguer" in getattr(table_mun_llog, "columns", [])):
@@ -2056,7 +2097,7 @@ def generar_pdf_municipi_tot(
                                force_all_xticks=False))
             ))
         except Exception:
-            pass
+            _log_pdf()
     # Doble eje (anual)
     if ("Nombre de contractes de lloguer" in getattr(table_mun_llog_y, "columns", [])) and \
        ("Rendes mitjanes de lloguer" in getattr(table_mun_llog_y, "columns", [])):
@@ -2075,7 +2116,7 @@ def generar_pdf_municipi_tot(
                               force_all_xticks=True))
             ))
         except Exception:
-            pass
+            _log_pdf()
     if items_llog:
         sections.append(("Lloguer", items_llog))
 
@@ -2109,7 +2150,7 @@ def generar_pdf_municipi_tot(
                         delta = f"{(100.0 * (last_val/prev_val - 1)):.1f}%"
                 kpis_pdf.append(("Població (últim any)", f"{last_val:,.0f}".replace(",", "."), delta))
             except Exception:
-                pass
+                _log_pdf()
 
             # Tabla (transpuesta)
             items_demo_pop.append((
@@ -2124,7 +2165,7 @@ def generar_pdf_municipi_tot(
                           start_year=2000, force_all_xticks=True))
             ))
     except Exception:
-        pass
+        _log_pdf()
     if items_demo_pop:
         sections.append(("Demografia — Població", items_demo_pop))
 
@@ -2147,9 +2188,9 @@ def generar_pdf_municipi_tot(
                 kpis_pdf.append(("Població nacional", f"{(100.0 - float(row['Perc_extranjera'])):.1f}%", None))
                 kpis_pdf.append(("Població estrangera", f"{float(row['Perc_extranjera']):.1f}%", None))
             except Exception:
-                pass
+                _log_pdf()
     except Exception:
-        pass
+        _log_pdf()
     if items_demo_llar:
         sections.append(("Demografia — Llar", items_demo_llar))
 
@@ -2167,7 +2208,7 @@ def generar_pdf_municipi_tot(
                     val_rn = float(df_rn.iloc[-1, 0])
                     kpis_pdf.append((f"Renda neta per llar ({any_rn})", f"{val_rn:,.0f}".replace(",", "."), None))
                 except Exception:
-                    pass
+                    _log_pdf()
 
                 # Tabla (transpuesta)
                 items_renda.append((
@@ -2183,7 +2224,7 @@ def generar_pdf_municipi_tot(
                 ))
                 
     except Exception:
-        pass
+        _log_pdf()
     if items_renda:
         sections.append(("Economia — Renda", items_renda))
 
@@ -2259,7 +2300,7 @@ def generar_pdf_municipi_tot(
                 sections.append(("Oferta de nova construcció", items_oferta))
 
         except Exception:
-            pass
+            _log_pdf()
 
     # "Fitxa de demanda potencial": mòdul independent i autocontingut
     # (fitxes_demanda_potencial.py), afegit el 2026-08-13. A diferència dels dos
@@ -2275,7 +2316,7 @@ def generar_pdf_municipi_tot(
                     items_fitxa.append(("text", fitxa_dp.text_metodologia()))
                     sections.append(("Fitxa de demanda potencial d'habitatge", items_fitxa))
         except Exception:
-            pass
+            _log_pdf()
 
 
     # ==========================
@@ -2356,14 +2397,6 @@ def latest_year_value(df, vars_, years):
         if pd.notnull(v): return y, v
     return None, np.nan
 
-def prev_year_value(df, vars_, cur_year, years):
-    """(año, valor) inmediatamente anterior con dato a cur_year para vars_."""
-    if not cur_year or cur_year not in years: return None, np.nan
-    start = years.index(cur_year) + 1
-    for y in years[start:]:
-        v = get_year_val(df, vars_, y)
-        if pd.notnull(v): return y, v
-    return None, np.nan
 
 def sum_age(year, groups, df_pob):
     s=0.0; ok=False
@@ -2372,12 +2405,6 @@ def sum_age(year, groups, df_pob):
         if pd.notnull(v): s+=v; ok=True
     return s if ok else np.nan
 
-def latest_year_sum_age(groups, years, df_pob):
-    """(año, suma) más reciente con dato para la suma de grupos."""
-    for y in years:
-        s = sum_age(y, groups, df_pob)
-        if pd.notnull(s): return y, s
-    return None, np.nan
 
 st.set_page_config(
     page_title="Observatori del Sector APCE",
@@ -2536,6 +2563,70 @@ def _neteja_periodes_no_publicats(df, date_col="Fecha"):
     return df
 
 
+def _neteja_trimestres_incomplets(df_trim, df_mensual, date_col="Fecha"):
+    """Descarta l'últim trimestre d'una columna quan la font mensual encara no
+    n'ha publicat els tres mesos.
+
+    Les sèries trimestrals de producció s'obtenen agregant la font mensual, i
+    l'agregació suma els mesos que hi ha. Quan la font va per febrer, el 2026T1
+    arriba amb dos mesos de tres: els habitatges iniciats a Espanya valien 24.991
+    en lloc dels ~36.000 d'un trimestre sencer, el gràfic trimestral queia en
+    picat i la targeta de l'any en curs comparava aquell tros de trimestre amb el
+    1T sencer de l'any anterior (-30,78% en lloc del +9,26% real de gener-febrer
+    contra gener-febrer).
+
+    No cal cap llista escrita a mà: la columna es diu igual a les dues taules, o
+    sigui que es pot comptar quants mesos té el seu últim trimestre. Només es
+    toca la CUA -- el trimestre s'ha de ser alhora l'últim amb dada mensual i
+    l'últim amb dada trimestral --, així no es toca res de l'històric encara que
+    una sèrie mensual antiga tingui forats o s'hagi discontinuat.
+
+    Les columnes que només són trimestrals (compravendes, preus...) no hi passen:
+    la font ja les publica per trimestres sencers."""
+    if df_trim.empty or df_mensual.empty or date_col not in df_trim.columns:
+        return df_trim
+    reservades = (date_col, "Trimestre", "Data", "index")
+    cols = [c for c in df_trim.columns
+            if c not in reservades and c in df_mensual.columns
+            and np.issubdtype(df_trim[c].dtype, np.number)
+            and np.issubdtype(df_mensual[c].dtype, np.number)]
+    if not cols:
+        return df_trim
+
+    mensual = df_mensual.sort_values(date_col)
+    data_m = pd.to_datetime(mensual[date_col])
+    clau_m = (data_m.dt.year * 4 + data_m.dt.quarter).to_numpy()
+    te_m = mensual[cols].notna().to_numpy()
+    if not te_m.any():
+        return df_trim
+    # últim mes amb dada de cada columna i quants mesos té el seu trimestre
+    hi_ha_m = te_m.any(axis=0)
+    ultim_m = te_m.shape[0] - 1 - np.argmax(te_m[::-1], axis=0)
+    clau_ultim = clau_m[ultim_m]
+    n_mesos = np.zeros(len(cols), dtype=int)
+    for clau in np.unique(clau_ultim[hi_ha_m]):
+        n_mesos[clau_ultim == clau] = te_m[clau_m == clau].sum(axis=0)[clau_ultim == clau]
+    incomplet = hi_ha_m & (n_mesos < 3)
+    if not incomplet.any():
+        return df_trim
+
+    data_q = pd.to_datetime(df_trim[date_col])
+    clau_q = (data_q.dt.year * 4 + data_q.dt.quarter).to_numpy()
+    te_q = df_trim[cols].notna().to_numpy()
+    hi_ha_q = te_q.any(axis=0)
+    ultim_q = te_q.shape[0] - 1 - np.argmax(te_q[::-1], axis=0)
+    # només si aquell trimestre incomplet és també l'últim que la taula trimestral
+    # té per a aquesta columna: és una neteja de cua, mai de l'històric
+    a_buidar = incomplet & hi_ha_q & (clau_q[ultim_q] == clau_ultim)
+    if not a_buidar.any():
+        return df_trim
+    df_trim = df_trim.copy()
+    valors = df_trim[cols].to_numpy(dtype="float64", na_value=np.nan)
+    valors[ultim_q[a_buidar], np.flatnonzero(a_buidar)] = np.nan
+    df_trim[cols] = valors
+    return df_trim
+
+
 @st.cache_data(show_spinner=False)
 def import_data(trim_limit, month_limit):
     with open(DATA_FILE_SIMPLE, 'r', encoding="utf-8") as outfile:
@@ -2675,6 +2766,12 @@ def import_data(trim_limit, month_limit):
     DT_terr = _neteja_periodes_no_publicats(DT_terr)
     DT_mun_def = _neteja_periodes_no_publicats(DT_mun_def)
     DT_dis = _neteja_periodes_no_publicats(DT_dis)
+
+    # I, del mateix ordre de problema: un trimestre que la font mensual encara no
+    # ha acabat de publicar arriba amb dos mesos de tres i sembla una caiguda.
+    DT_terr = _neteja_trimestres_incomplets(DT_terr, DT_monthly)
+    DT_mun_def = _neteja_trimestres_incomplets(DT_mun_def, DT_monthly)
+    DT_dis = _neteja_trimestres_incomplets(DT_dis, DT_monthly)
 
     return([DT_monthly, DT_terr, DT_terr_y, DT_mun_def, DT_mun_y_def, DT_dis, DT_dis_y, maestro_mun, maestro_dis, censo_2021, rentaneta_mun, censo_2021_dis, rentaneta_dis, idescat_muns, df_mun_idescat, df_pob_ine, DT_mun_y])
 import_data = auto_spinner(import_data)
@@ -2837,6 +2934,44 @@ def _sense_cua_buida(df):
     if not te_dada.any():
         return df
     return df.iloc[:int(np.nonzero(te_dada)[0][-1]) + 1]
+
+
+def _nomes_anys_publicats(df_anual, df_font, prefix):
+    """Treu de la taula anual els anys que la FONT encara no ha publicat sencers.
+
+    Les taules anuals de preus són les úniques que no vénen de la taula anual de
+    la font: es fabriquen fent la mitjana dels trimestres. Això els creava una
+    fila per a l'any en curs, i com que indicator_year() decideix si un any està
+    tancat mirant justament si hi ha fila a la taula anual, es creia que l'any
+    estava tancat i calculava la variació contra l'any anterior SENCER: un
+    trimestre del 2026 contra els quatre del 2025. Mesurat als 208 municipis amb
+    targeta de preus, 8,87 punts d'error de mitjana, 179 amb més de 2 punts i 32
+    amb el signe canviat (Anglès, -4,91% quan és +33,54%).
+
+    Un any està publicat quan la font n'ha tret els QUATRE trimestres, mirant-ho
+    a tota la família d'indicador (totes les geografies del mateix prefix) i no a
+    la columna concreta: si a un municipi petit li falta un trimestre per manca
+    de mostra però aquell trimestre existeix per als altres, l'any sí que està
+    publicat i el seu valor anual es calcula amb els trimestres que tingui. Són
+    dues coses diferents que no s'han de confondre: "encara no ha sortit" i "no
+    hi ha prou transaccions per publicar-ho". Comprovat: dels 212 municipis, cap
+    no perd cap any tancat, i els 5 amb el 2025 incomplet (Alcover, Bescanó,
+    Cassà de la Selva, Celrà i Cervelló) el conserven."""
+    if df_anual is None or df_anual.empty or df_font is None or "Trimestre" not in getattr(df_font, "columns", []):
+        return df_anual
+    cols = [c for c in df_font.columns if c.startswith(prefix)]
+    if not cols:
+        return df_anual
+    valors = df_font[cols]
+    te_dada = (valors.notna() & (valors != 0)).any(axis=1)
+    trimestres = df_font.loc[te_dada, "Trimestre"].astype(str)
+    if trimestres.empty:
+        return df_anual
+    per_any = trimestres.groupby(trimestres.str[:4]).nunique()
+    sencers = [a for a, n in per_any.items() if n >= 4]
+    if not sencers:
+        return df_anual
+    return df_anual[df_anual.index.astype(str) <= max(sencers)]
 
 
 def tidy_Catalunya(data_ori, columns_sel, fecha_ini, fecha_fin, columns_output):
@@ -3384,6 +3519,13 @@ def line_plotly(table_n, selection_n, title_main, title_y, title_x="Trimestre", 
     plot_cat = table_n[selection_n]
     if replace_0==True:
         plot_cat = plot_cat.replace(0, np.nan)
+    # Retall de cua sobre les columnes QUE ES DIBUIXEN, no sobre la taula sencera.
+    # _sense_cua_buida() ja neteja la taula, però un gràfic en dibuixa un
+    # subconjunt i aquest pot acabar abans: a Catalunya/Producció la fila 2026T1
+    # existeix perquè les qualificacions d'HPO sí que hi tenen dada, mentre que
+    # els habitatges iniciats i acabats per tipologia acaben al 2025T4 -- i px.area,
+    # en apilar, pintava aquell buit com un 0 i el gràfic queia a zero al final.
+    plot_cat = _sense_cua_buida(plot_cat)
     colors = PLOTLY_PALETTE
     traces = []
     for i, col in enumerate(plot_cat.columns):
@@ -3408,6 +3550,7 @@ def bar_plotly(table_n, selection_n, title_main, title_y, year_ini, year_fin=LAS
     table_n = table_n.reset_index()
     table_n["Any"] = table_n["Any"].astype(int)
     plot_cat = table_n[(table_n["Any"] >= year_ini) & (table_n["Any"] <= year_fin)][["Any"] + selection_n].set_index("Any")
+    plot_cat = _sense_cua_buida(plot_cat)
     colors = PLOTLY_PALETTE[:3]
     traces = []
     for i, col in enumerate(plot_cat.columns):
@@ -3426,6 +3569,7 @@ def stacked_bar_plotly(table_n, selection_n, title_main, title_y, year_ini, year
     table_n = table_n.reset_index()
     table_n["Any"] = table_n["Any"].astype(int)
     plot_cat = table_n[(table_n["Any"] >= year_ini) & (table_n["Any"] <= year_fin)][["Any"] + selection_n].set_index("Any")
+    plot_cat = _sense_cua_buida(plot_cat)
     colors = PLOTLY_PALETTE[:3]
 
     traces = []
@@ -3532,6 +3676,13 @@ def bar_plotly_comparativa_100(serie_a, serie_b, label_a, label_b, title_main, y
 @st.cache_data(show_spinner=False)
 def area_plotly(table_n, selection_n, title_main, title_y, trim):
     plot_cat = table_n[table_n.index>=trim][selection_n]
+    # Retall de cua sobre les columnes QUE ES DIBUIXEN, no sobre la taula sencera.
+    # _sense_cua_buida() ja neteja la taula, però un gràfic en dibuixa un
+    # subconjunt i aquest pot acabar abans: a Catalunya/Producció la fila 2026T1
+    # existeix perquè les qualificacions d'HPO sí que hi tenen dada, mentre que
+    # els habitatges iniciats i acabats per tipologia acaben al 2025T4 -- i px.area,
+    # en apilar, pintava aquell buit com un 0 i el gràfic queia a zero al final.
+    plot_cat = _sense_cua_buida(plot_cat)
     fig = px.area(
         plot_cat,
         x=plot_cat.index,
@@ -3561,6 +3712,7 @@ def bar_plotly_demografia(table_n, selection_n, title_main, title_y, year_ini, y
     table_n = table_n.reset_index()
     table_n["Any"] = table_n["Any"].astype(int)
     plot_cat = table_n[(table_n["Any"] >= year_ini) & (table_n["Any"] <= year_fin)][["Any"] + selection_n].set_index("Any")
+    plot_cat = _sense_cua_buida(plot_cat)
     colors = PLOTLY_PALETTE_DEMOGRAFIA[:4]
     traces = []
     for i, col in enumerate(plot_cat.columns):
@@ -5913,6 +6065,7 @@ if selected=="Municipis":
             table_mun_y["Any"] = table_mun_y["Trimestre"].str[:4]
             table_mun_y = table_mun_y.drop("Trimestre", axis=1)
             table_mun_y = table_mun_y.groupby("Any").mean()
+            table_mun_y = _nomes_anys_publicats(table_mun_y, DT_mun, "prvivt_")
             left, center, right = st.columns((1,1,1))
             with left:
                 try:
@@ -6573,6 +6726,7 @@ if selected == "Informe de Mercat i Sectorial":
                 table_mun_pr_y = table_mun_pr.reset_index().copy()
                 table_mun_pr_y["Any"] = table_mun_pr_y["Trimestre"].str[:4]
                 table_mun_pr_y = table_mun_pr_y.drop("Trimestre", axis=1).groupby("Any").mean()
+                table_mun_pr_y = _nomes_anys_publicats(table_mun_pr_y, DT_mun, "prvivt_")
 
                 # --- Superfície ---
                 table_mun_sup = tidy_Catalunya(
@@ -6633,6 +6787,7 @@ if selected == "Informe de Mercat i Sectorial":
                         table_prov_pr_y = table_prov_pr.reset_index().copy()
                         table_prov_pr_y["Any"] = table_prov_pr_y["Trimestre"].str[:4]
                         table_prov_pr_y = table_prov_pr_y.drop("Trimestre", axis=1).groupby("Any").mean()
+                        table_prov_pr_y = _nomes_anys_publicats(table_prov_pr_y, DT_terr, "prvivt_")
                         table_prov_llog_y = tidy_Catalunya_anual(
                             DT_terr_y, ["Fecha"] + concatenate_lists(["trvivalq_", "pmvivalq_"], selected_prov),
                             min_year, annual_upper_bound(f"trvivalq_{selected_prov}", df_annual=DT_terr_y, df_quarterly=DT_terr),
@@ -6667,6 +6822,7 @@ if selected == "Informe de Mercat i Sectorial":
                         table_cap_pr_y = table_cap_pr.reset_index().copy()
                         table_cap_pr_y["Any"] = table_cap_pr_y["Trimestre"].str[:4]
                         table_cap_pr_y = table_cap_pr_y.drop("Trimestre", axis=1).groupby("Any").mean()
+                        table_cap_pr_y = _nomes_anys_publicats(table_cap_pr_y, DT_mun, "prvivt_")
                         table_cap_llog_y = tidy_Catalunya_anual(
                             DT_mun_y, ["Fecha"] + concatenate_lists(["trvivalq_", "pmvivalq_"], selected_capital),
                             min_year, annual_upper_bound(f"trvivalq_{selected_capital}", df_annual=DT_mun_y, df_quarterly=DT_mun),
@@ -6701,6 +6857,7 @@ if selected == "Informe de Mercat i Sectorial":
                         table_comarca_pr_y = table_comarca_pr.reset_index().copy()
                         table_comarca_pr_y["Any"] = table_comarca_pr_y["Trimestre"].str[:4]
                         table_comarca_pr_y = table_comarca_pr_y.drop("Trimestre", axis=1).groupby("Any").mean()
+                        table_comarca_pr_y = _nomes_anys_publicats(table_comarca_pr_y, DT_terr, "prvivt_")
                         table_comarca_llog_y = tidy_Catalunya_anual(
                             DT_terr_y, ["Fecha"] + concatenate_lists(["trvivalq_", "pmvivalq_"], selected_comarca),
                             min_year, annual_upper_bound(f"trvivalq_{selected_comarca}", df_annual=DT_terr_y, df_quarterly=DT_terr),
@@ -6733,6 +6890,7 @@ if selected == "Informe de Mercat i Sectorial":
                         pr_y = pr.reset_index().copy()
                         pr_y["Any"] = pr_y["Trimestre"].str[:4]
                         pr_y = pr_y.drop("Trimestre", axis=1).groupby("Any").mean()
+                        pr_y = _nomes_anys_publicats(pr_y, DT_mun, "prvivt_")
                         llog_y = tidy_Catalunya_anual(
                             DT_mun_y, ["Fecha"] + concatenate_lists(["trvivalq_", "pmvivalq_"], municipi),
                             min_year, annual_upper_bound(f"trvivalq_{municipi}", df_annual=DT_mun_y, df_quarterly=DT_mun),
@@ -7377,7 +7535,11 @@ def oferta_adaptar_dades(df):
     tipus_coneguts = df[["De gasoil", "De propà", "De gas natural", "D'electricitat"]].sum(axis=1)
     df["No s'indica tipus"] = (tipus_coneguts == 0).astype(int)
 
-    df["APAR"] = np.where(df["garage"] == 1, "Amb plaça d'aparcament", "Sense informació")
+    # "Sense informació" era una etiqueta equivocada: garage arriba de l'Atlas com un
+    # 0/1 net, sense buits (3.395 habitatges amb plaça i 7.782 sense), o sigui que del
+    # 0 sí que se'n sap la resposta -- el gràfic deia que del 70% de la mostra no se
+    # sabia res quan el que diu la font és que no en tenen.
+    df["APAR"] = np.where(df["garage"] == 1, "Amb plaça d'aparcament", "Sense plaça d'aparcament")
 
     for col in ["Parc infantil", "Sala de jocs", "Sauna", "Altres", "Cap dels anteriors", "Aerotèrmia", "Preinstal·lació d'A.C./B. Calor/Calefacció", "Parquet", "Placa de cocció amb gas", "Placa de cocció vitroceràmica", "Placa d'inducció", "Plaques solars", "Cuines estàndard", "Cuines americanes", "Estudi/golfes", "Safareig", "Altres interiors", "Altres exteriors"]:
         df[col] = 0
@@ -8439,5 +8601,52 @@ st.markdown('<a href="#dalt" class="boto-amunt" title="Tornar a dalt" aria-label
 # contenidor, d'alçada zero, no deixi cap forat enmig del contingut.
 components.html(
     "<script>try{window.parent.document.documentElement.lang='ca';}catch(e){}</script>",
+    height=0,
+)
+
+# El botó "tornar a dalt" només apareix quan s'ha baixat. Mateix mecanisme que la
+# línia de sobre: un component d'alçada zero que pot tocar el document pare, perquè
+# st.markdown no executa <script>. Cada rerun de Streamlit reconstrueix el DOM, així
+# que el temporitzador torna a enganxar l'escoltador i refresca l'estat; el guard
+# del dataset evita que s'instal·li dues vegades.
+components.html(
+    """
+<script>
+(function () {
+  var doc = window.parent && window.parent.document;
+  if (!doc || !doc.body) { return; }
+  if (doc.body.dataset.botoAmunt === "1") { return; }
+  doc.body.dataset.botoAmunt = "1";
+  var LLINDAR = 300;
+  function contenidors() {
+    var l = [doc.scrollingElement, doc.documentElement, doc.body,
+             doc.querySelector('section.main'),
+             doc.querySelector('[data-testid="stMain"]'),
+             doc.querySelector('[data-testid="stAppViewContainer"]')];
+    return l.filter(function (e) { return e; });
+  }
+  function desplacament() {
+    var max = window.parent.scrollY || 0;
+    contenidors().forEach(function (e) { if (e.scrollTop > max) { max = e.scrollTop; } });
+    return max;
+  }
+  function actualitza() {
+    var boto = doc.querySelector('.boto-amunt');
+    if (boto) { boto.classList.toggle('amunt-oculta', desplacament() <= LLINDAR); }
+  }
+  function enganxa() {
+    contenidors().forEach(function (e) {
+      if (e.dataset && e.dataset.amuntScroll === "1") { return; }
+      if (e.dataset) { e.dataset.amuntScroll = "1"; }
+      e.addEventListener('scroll', actualitza, { passive: true });
+    });
+  }
+  window.parent.addEventListener('scroll', actualitza, { passive: true });
+  enganxa();
+  actualitza();
+  setInterval(function () { enganxa(); actualitza(); }, 400);
+})();
+</script>
+""",
     height=0,
 )
