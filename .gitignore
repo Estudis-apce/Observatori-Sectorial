@@ -24,3 +24,8 @@ Thumbs.db
 /indicadores_informe_demanda.json
 /indicadores_informe_demanda_comarca.json
 /indicadores_informe_demanda_provincia.json
+
+# Documentacio i scripts de la revisio de calculs de setembre del 2026: decisions
+# pendents, el banc de proves i les mesures. Es queden al disc de treball; al
+# repositori no hi pinten res.
+/_revisio_calculs/

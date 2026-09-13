@@ -1352,6 +1352,13 @@ def _pick_last_val(df_long: pd.DataFrame, long_label: str):
         return None, None
 
 
+# Quants decimals té cada indicador d'"Altres indicadors". La resta són recomptes i
+# van arrodonits a l'enter, igual que al PDF.
+DECIMALS_ALTRES_INDICADORS = {
+    "Residus municipals per càpita (kg/hab/dia)": 2,
+}
+
+
 def _st_metric_pick(sel_df: pd.DataFrame, nombre_largo: str):
     """st_metric per a un indicador de sel/df_mun_idescat (etiqueta + any entre
     parèntesis). Mostra 'No disponible' si el municipi no té dada per a aquest
@@ -1360,7 +1367,12 @@ def _st_metric_pick(sel_df: pd.DataFrame, nombre_largo: str):
     if year is None or val is None:
         st_metric(label=nombre_largo, value="No disponible")
     else:
-        st_metric(label=f"{nombre_largo} ({year})", value=int(val))
+        # int() TRUNCAVA: els residus per habitant i dia (1,71 kg) sortien com a "1"
+        # als 946 municipis, i l'atur registrat, que són mitjanes anuals, perdia
+        # sempre la part decimal cap avall (450,7 -> 450). El PDF ja ho feia bé; ara
+        # la web fa exactament el mateix, així que els dos diuen el mateix número.
+        dec = DECIMALS_ALTRES_INDICADORS.get(nombre_largo, 0)
+        st_metric(label=f"{nombre_largo} ({year})", value=f"{float(val):,.{dec}f}")
 
 # ========== GENERADOR — MUNICIPI (ORDEN COHERENTE) ==========
 def _log_pdf():
@@ -2992,8 +3004,33 @@ def tidy_Catalunya_mensual(data_ori, columns_sel, fecha_ini, fecha_fin, columns_
     output_data["Fecha"] = output_data["Fecha"].astype(str)
     return(_sense_cua_buida(output_data.set_index("Fecha")))
 
-def tidy_present(data_ori, columns_sel, year):
-    output_data = data_ori[data_ori[columns_sel]!=0][["Trimestre"] + [columns_sel]].dropna()
+def tidy_present(data_ori, columns_sel, year, zero_es_dada=False):
+    """Variacio acumulada de l'any en curs: mateixos trimestres als dos anys.
+
+    `zero_es_dada` diu si un 0 d'aquesta columna es un valor o vol dir "sense
+    dada". Ho decideix qui crida (indicator_year) amb la calibracio que ja fa
+    servir per saber si l'indicador se suma o se'n fa la mitjana, aixi que no cal
+    mantenir cap llista d'indicadors:
+
+      - RECOMPTES (habitatges iniciats i acabats, compravendes, contractes de
+        lloguer, qualificacions d'HPO): un trimestre amb 0 es un trimestre en que
+        no se'n va fer cap. Descartar-lo deixava cada any amb un conjunt diferent
+        de trimestres i la variacio comparava peres amb pomes. Mesurat sobre les
+        dades: 1.024 columnes de flux donaven una variacio diferent de la
+        correcta, i no per decimals -- els habitatges acabats de la Conca de
+        Barbera passaven de 1+10 el 2025 a 3+0 el 2026 i la fitxa deia +200%
+        quan la caiguda real es del 72,7%.
+      - NIVELLS (preus, rendes, superficies, tipus): un 0 es impossible i vol dir
+        que la font no ho ha publicat, aixi que se segueix descartant.
+
+    Si l'any anterior suma 0, la variacio no existeix i es retorna NaN en lloc
+    d'infinit: la targeta es queda sense variacio. Al reves (de N a 0) si que te
+    sentit i surt -100%."""
+    output_data = data_ori[["Trimestre"] + [columns_sel]].dropna()
+    if not zero_es_dada:
+        output_data = output_data[output_data[columns_sel] != 0]
+    if output_data.empty:
+        return np.nan
     output_data["Trimestre_aux"] = output_data["Trimestre"].str[-1]
     output_data = output_data[(output_data["Trimestre_aux"]<=output_data['Trimestre_aux'].iloc[-1])]
     output_data["Any"] = output_data["Trimestre"].str[0:4]
@@ -3001,7 +3038,10 @@ def tidy_present(data_ori, columns_sel, year):
     output_data = output_data.groupby("Any").mean().pct_change(fill_method=None).mul(100).reset_index()
     output_data = output_data[output_data["Any"]==str(year)]
     output_data = output_data.set_index("Any")
-    return(output_data.values[0][0]) if not output_data.empty else np.nan
+    if output_data.empty:
+        return np.nan
+    valor = output_data.values[0][0]
+    return valor if np.isfinite(valor) else np.nan
 
 def tidy_present_monthly(data_ori, columns_sel, year):
     # Filtre de mesos propi, igual que tidy_present_monthly_aux(): abans depenia
@@ -3058,13 +3098,28 @@ def tidy_diff_punt_a_punt(data_ori, columns_sel, year):
     return (float(actual[col].iloc[-1]) - float(anterior[col].iloc[0])) * 100
 
 
-def _subperiodes_any(data_ori, columns_sel, year):
+def _frequencia_de_taula(taula, frequency_actual=None):
+    """Quina freqüència li toca a `taula`: mensual si porta columna "Fecha" (les
+    taules de tidy_Catalunya_m/_mensual), trimestral si l'índex és "Trimestre".
+    Serveix perquè, en canviar de font, el càlcul també canviï de branca."""
+    if "Fecha" in getattr(taula, "columns", []):
+        return frequency_actual if frequency_actual in ("month", "month_aux") else "month"
+    return None
+
+
+def _subperiodes_any(data_ori, columns_sel, year, zero_es_dada=False):
     """Valors subanuals (trimestres o mesos) de `columns_sel` per a `year`, tant si
     l'índex és 'Trimestre' (YYYYTn, taules trimestrals via tidy_Catalunya) com si hi
     ha una columna 'Fecha' (taules mensuals via tidy_Catalunya_m).
-    Es descarten els 0 a més dels NaN: a les sèries de lloguer el 0 vol dir "sense
-    dada" (mateix criteri que table_trim, que fa replace(0, NaN), i que
-    tidy_present, que filtra !=0), i comptar-los enfonsaria la mitjana."""
+    Per defecte es descarten els 0 a més dels NaN, perquè als NIVELLS (preus,
+    rendes) un 0 vol dir "sense dada" i comptar-lo enfonsaria la mitjana. Als
+    RECOMPTES, en canvi, un 0 és un valor, i qui crida ho indica amb
+    `zero_es_dada`: sumar zeros no canvia la suma, però sí que canvia que la sèrie
+    existeixi. Sense això, una comarca que no va iniciar cap habitatge
+    plurifamiliar sortia com a "No disponible" en lloc de 0.
+
+    El valor per defecte és False a propòsit: _operacio_any_obert() fa servir
+    aquesta mateixa funció per calibrar, i allà el criteri no ha de canviar."""
     if columns_sel not in data_ori.columns:
         return pd.Series(dtype="float64")
     if "Fecha" in data_ori.columns:
@@ -3076,7 +3131,7 @@ def _subperiodes_any(data_ori, columns_sel, year):
     if sub.empty:
         return pd.Series(dtype="float64")
     valors = pd.to_numeric(sub[columns_sel], errors="coerce").dropna()
-    return valors[valors != 0]
+    return valors if zero_es_dada else valors[valors != 0]
 
 
 def _periodes_per_any(data_ori):
@@ -3153,7 +3208,13 @@ def tidy_present_level(df_annual, data_ori, columns_sel, year):
     Catalunya sortia exactament el doble (7.865 milers d'ocupats en lloc de 3.932) i
     els costos de construcció i l'Euríbor, el triple. L'operació la decideix ara
     _operacio_any_obert() indicador per indicador."""
-    valors = _subperiodes_any(data_ori, columns_sel, year)
+    # Dues preguntes diferents, cadascuna amb la seva eina:
+    #  - "un 0 d'aquesta columna és un valor?" -> _zero_es_dada(), per la naturalesa
+    #    de l'indicador. Si no, un període amb 0 habitatges desapareixia i la
+    #    targeta deia "No disponible" en lloc de 0.
+    #  - "l'any obert se suma o se'n fa la mitjana?" -> _operacio_any_obert(), que
+    #    ho calibra amb els anys tancats.
+    valors = _subperiodes_any(data_ori, columns_sel, year, zero_es_dada=_zero_es_dada(columns_sel))
     if valors.empty:
         return np.nan
     if _operacio_any_obert(df_annual, data_ori, columns_sel) == "suma":
@@ -3163,7 +3224,22 @@ def tidy_present_level(df_annual, data_ori, columns_sel, year):
 # Sense @st.cache_data: es crida ~200 cops per rerun (un cop per mètrica) amb dos
 # DataFrames com a arguments; fer-ne el hash costaria ~1 s per rerun mentre que el
 # càlcul real són ~30 ms (mesurat: cachejar-la era ~30× més lent).
-def indicator_year(df, df_aux, year, variable, tipus, frequency=None):
+def indicator_year(df, df_aux, year, variable, tipus, frequency=None, df_aux_alt=None):
+    """`df_aux_alt` és la font de recanvi: si la principal no té cap dada de l'any
+    demanat i la de recanvi sí, es fa servir aquesta.
+
+    Les fonts han canviat de calendari. Fins al 2025 la producció de Catalunya
+    arribava mes a mes, i les targetes de províncies i comarques la llegien
+    d'allà; des del 2026 la Generalitat publica per trimestres i la sèrie mensual
+    d'aquelles geografies es va quedar al desembre del 2025, o sigui que la
+    targeta buscava el dato en una taula que ja no s'alimenta i es quedava en
+    blanc mentre la taula trimestral de sota, a la mateixa pantalla, sí que
+    tenia el 2026. A Espanya passa al revés: la mensual va per davant (arriba al
+    febrer) i el trimestre encara no està sencer.
+
+    Amb la font de recanvi no cal decidir-ho a mà ni saber quina va primer: es
+    mira on hi ha dada d'aquell any i s'agafa. La freqüència s'ajusta sola a la
+    taula que s'acaba fent servir, perquè cada forma de taula té el seu càlcul."""
     # `variable` arriba com a string a uns call sites i com a llista a
     # d'altres (herència del codi original: cada tidy_present_* espera un
     # format diferent). Normalitzem un cop aquí perquè la resta de la
@@ -3190,6 +3266,15 @@ def indicator_year(df, df_aux, year, variable, tipus, frequency=None):
     # començar baix i pujar. Ara un any tancat agafa la variació acumulada a
     # tancament de la seva pròpia taula anual, i només l'any en curs fa servir
     # el càlcul en viu retallat.
+    # Font de recanvi: només té sentit per a l'any obert, que és l'únic que es
+    # calcula amb la taula subanual (un any tancat surt de la taula anual).
+    if df_aux_alt is not None and any_obert:
+        try:
+            if _subperiodes_any(df_aux, variable_str, year).empty and not _subperiodes_any(df_aux_alt, variable_str, year).empty:
+                df_aux = df_aux_alt
+                frequency = _frequencia_de_taula(df_aux, frequency)
+        except Exception:
+            pass
     usar_calcul_en_viu = any_obert
     # Els "diff" són només les quatre targetes de tipus d'interès d'Espanya, i van
     # totes per la comparació punt a punt, tant si l'any és obert com tancat: el
@@ -3208,7 +3293,9 @@ def indicator_year(df, df_aux, year, variable, tipus, frequency=None):
         # a executar aquesta branca fins ara), no ho intentem: es deixa
         # "nan" en comptes de barrejar estructures incompatibles.
         try:
-            return(round(tidy_present(df_aux.reset_index(), variable_str, year),2))
+            # Un 0 és una dada als recomptes i un "sense dada" als nivells, igual que
+            # a les taules i al mapa: mateix criteri a tota l'app.
+            return(round(tidy_present(df_aux.reset_index(), variable_str, year, zero_es_dada=_zero_es_dada(variable_str)),2))
         except Exception:
             return np.nan
     if tipus=="level":
@@ -3249,29 +3336,49 @@ def indicator_year(df, df_aux, year, variable, tipus, frequency=None):
 # únic any/trimestre global. Sense @st.cache_data pel mateix motiu que
 # indicator_year: operen sobre columnes ja carregades, el cost real és
 # ínfim comparat amb el cost de fer-ne el hash.
+def _familia_de_columna(col):
+    """La família d'un indicador: el nom sense la geografia final. De
+    "prvivt_Cervelló" en surt "prvivt_", que és la família de TOTS els municipis;
+    de "iniviv_uni_50m2_Manresa", "iniviv_uni_50m2_". Les columnes sense
+    geografia (trvivnes, ipves) es queden com estan i llavors la família és la
+    pròpia columna."""
+    return col.rsplit("_", 1)[0] + "_" if "_" in col else col
+
+
 def last_closed_year(col, df_annual, df_quarterly=None, df_monthly=None, date_col="Fecha"):
-    """Darrer any 'tancat' per a `col` a la taula anual `df_annual`: un any
-    compta com a tancat si la seva font de més freqüència (mateixa columna a
-    df_quarterly/df_monthly) té dades als 4 trimestres / 12 mesos d'aquest
-    any. Si `col` no existeix a cap font de més freqüència (p. ex.
-    qualificacions d'HPO), es confia directament en el darrer any no nul de
-    df_annual. None si `col` no té cap dada anual."""
+    """Darrer any TANCAT per a `col`: aquell del qual la FONT ja ha publicat tots
+    els períodes (4 trimestres o 12 mesos).
+
+    Es mira a la FAMÍLIA d'indicador -- totes les geografies alhora -- i no a la
+    columna concreta, perquè són dues coses diferents: que la font encara no hagi
+    tret el trimestre, i que aquell municipi no tingui prou transaccions perquè
+    se'n publiqui el valor. Amb la comprovació per columna, cinc municipis petits
+    perdien l'any 2025 sencer tot i que la font sí que en tenia el valor anual:
+    a Cervelló el preu del 2025 (2.088 €/m²) no sortia ni a la taula, ni a
+    l'Excel, ni al PDF, perquè d'aquell municipi només se n'havia publicat un
+    trimestre. Alcover, Bescanó, Cassà de la Selva i Celrà, igual.
+
+    És el mateix criteri que ja fa servir _nomes_anys_publicats() per a les
+    taules anuals de preus. Si `col` no és a cap font de més freqüència (p. ex.
+    les qualificacions d'HPO), es confia en el darrer any no nul de df_annual.
+    None si `col` no té cap dada anual."""
     if col not in df_annual.columns:
         return None
     years = sorted(df_annual.loc[df_annual[col].notna(), date_col].astype(int).unique(), reverse=True)
+    familia = _familia_de_columna(col)
+
+    def _publicats(df, year):
+        cols = [c for c in df.columns if c.startswith(familia)] or [col]
+        te_dada = df[cols].notna().any(axis=1)
+        return int((te_dada & (pd.to_datetime(df[date_col]).dt.year == year)).sum())
+
     for year in years:
         if df_quarterly is not None and col in df_quarterly.columns:
-            n = df_quarterly.loc[
-                (pd.to_datetime(df_quarterly[date_col]).dt.year == year) & df_quarterly[col].notna()
-            ].shape[0]
-            if n >= 4:
+            if _publicats(df_quarterly, year) >= 4:
                 return year
             continue
         if df_monthly is not None and col in df_monthly.columns:
-            n = df_monthly.loc[
-                (pd.to_datetime(df_monthly[date_col]).dt.year == year) & df_monthly[col].notna()
-            ].shape[0]
-            if n >= 12:
+            if _publicats(df_monthly, year) >= 12:
                 return year
             continue
         return year
@@ -3300,6 +3407,7 @@ def last_available_year(col, df_quarterly=None, df_monthly=None, df_annual=None)
     aquesta detecta el moment en què comença a haver-hi dada real d'un any
     nou — necessari perquè Espanya/Catalunya solen tenir dada uns mesos
     abans que comarques/municipis/districtes per al mateix indicador."""
+    anys = []
     for df, date_col in ((df_quarterly, "Fecha"), (df_monthly, "Fecha"), (df_annual, "Fecha")):
         if df is None or col not in df.columns:
             continue
@@ -3307,8 +3415,13 @@ def last_available_year(col, df_quarterly=None, df_monthly=None, df_annual=None)
         if valid.empty:
             continue
         val = valid.iloc[-1]
-        return int(val) if isinstance(val, (int, np.integer)) else int(pd.to_datetime(val).year)
-    return None
+        anys.append(int(val) if isinstance(val, (int, np.integer)) else int(pd.to_datetime(val).year))
+    # El MÉS RECENT de totes les fonts, no el de la primera que tingui la columna:
+    # des del 2026 unes geografies van per davant en trimestral i d'altres en
+    # mensual, i amb la primera font el desplegable amagava un any que sí que
+    # existia a l'altra (Espanya/Producció es quedava al 2025 tot i tenir gener i
+    # febrer del 2026 a la mensual).
+    return max(anys) if anys else None
 
 
 def year_selector_options(ref_col, df_quarterly=None, df_monthly=None, df_annual=None, start_year=2018):
@@ -3800,13 +3913,45 @@ def format_dataframes(df, style_n):
 
 
 
+# Paraules que identifiquen un indicador de NIVELL, on un 0 és impossible i per tant
+# vol dir que la font no ho ha publicat: preus, rendes, superfícies, tipus d'interès,
+# índexs, costos de construcció i les magnituds del mercat laboral. Tota la resta són
+# RECOMPTES -- habitatges iniciats i acabats, compravendes, contractes, qualificacions
+# d'HPO, hipoteques -- i allà un 0 és un valor: aquell trimestre no se'n va fer cap.
+_NIVELL_PARAULES = (
+    "preu", "renda", "rende", "superf", "euríbor", "euribor", "tipus d'interès",
+    "ipc", "igc", "irav", "índex", "index", "taxa", "esforç",
+    "cost", "mitjaneres", "nau industrial",
+    "població ocupada", "població activa", "població desocupada", "població inactiva",
+    "ocupació del sector",
+    "afiliats", "atur registrat", "consum de ciment",
+)
+
+
+def _zero_es_dada(etiqueta):
+    """Un 0 en aquesta columna és un valor (True) o vol dir "sense dada" (False)?
+
+    Es decideix pel nom de la columna perquè table_trim() només rep la taula ja
+    tidificada, sense la taula anual amb què _operacio_any_obert() calibra. S'ha
+    comprovat que la regla coincideix amb aquella calibració a totes les columnes
+    on es poden comparar les dues."""
+    return not any(p in str(etiqueta).lower() for p in _NIVELL_PARAULES)
+
+
 def table_trim(data_ori, year_ini, rounded=False, formated=True):
     data_ori = data_ori.reset_index()
     data_ori["Any"] = data_ori["Trimestre"].str.split("T").str[0]
     data_ori["Trimestre"] = data_ori["Trimestre"].str.split("T").str[1]
     data_ori["Trimestre"] = data_ori["Trimestre"] + "T"
     data_ori = data_ori[data_ori["Any"]>=str(year_ini)]
-    data_ori = data_ori.replace(0, np.nan)
+    # Abans es convertia TOT 0 en "sense dada", i a les taules de producció municipal
+    # això eren 1.674 cel·les de 6.784 (el 24,7%) que sortien com un guió quan el
+    # valor real era zero: aquell trimestre el poble no va iniciar cap habitatge.
+    # Ara només es fa a les columnes on un 0 seria impossible.
+    _cols_nivell = [c for c in data_ori.columns
+                    if c not in ("Any", "Trimestre") and not _zero_es_dada(c)]
+    if _cols_nivell:
+        data_ori[_cols_nivell] = data_ori[_cols_nivell].replace(0, np.nan)
     if rounded==True:
         numeric_columns = data_ori.select_dtypes(include=['float64', 'int64']).columns
         data_ori[numeric_columns] = _elementwise(data_ori[numeric_columns], lambda x: round(x, 1))
@@ -3848,7 +3993,8 @@ load_shp = auto_spinner(load_shp)
 shapefile_mun = load_shp(SHAPEFILE_MUN)
 
 @st.cache_data(show_spinner=False, max_entries=64)
-def tmp_map(_DT_mun_y, _shapefile_mun, _maestro_mun, var_prefix, any, fecha_col="Fecha"):
+def tmp_map(_DT_mun_y, _shapefile_mun, _maestro_mun, var_prefix, any, fecha_col="Fecha", name_var_prefix=None):
+    name_var_prefix = name_var_prefix if name_var_prefix is not None else var_prefix
     cols = _DT_mun_y.filter(regex=f"^{var_prefix}").columns
     df_long = (
         _DT_mun_y[[fecha_col] + list(cols)]
@@ -3866,7 +4012,12 @@ def tmp_map(_DT_mun_y, _shapefile_mun, _maestro_mun, var_prefix, any, fecha_col=
         how="left"
     ).dropna(subset=["Codi"])
     df_long["Codi"] = df_long["Codi"].astype(int)
-    df_long["valor"] = df_long["valor"].replace(0, np.nan)
+    # Mateix criteri que a les taules: als recomptes un 0 és un valor (aquell
+    # municipi no en va fer cap aquell any) i s'ha de poder pintar; als nivells
+    # (preus, rendes, superfícies) un 0 és impossible i vol dir que no s'ha
+    # publicat, així que es queda com "Sense dades".
+    if not _zero_es_dada(name_var_prefix):
+        df_long["valor"] = df_long["valor"].replace(0, np.nan)
     output = _shapefile_mun.merge(
         df_long[["Codi", "valor"]],
         left_on="codiine",
@@ -4295,7 +4446,12 @@ if selected == "Espanya":
             if _col_irav in _mesos_any.columns and _mesos_any[_col_irav].isna().all():
                 _mesos_any = _mesos_any.drop(columns=[_col_irav])
             st.markdown(taula_html_es(table_monthly(_mesos_any, selected_year_n)), unsafe_allow_html=True)
-            st.markdown(filedownload(table_monthly(table_espanya_m, 2023), f"{selected_index}_Espanya.xlsx"), unsafe_allow_html=True)
+            # L'Excel porta NOMÉS l'any triat al desplegable, igual que la taula de
+            # pantalla. Abans arrencava en un any fix (2023 aquí i 2024 als tipus
+            # d'interès, sense cap motiu) i sortien 32 columnes amb el nom del mes
+            # repetit tres vegades -- "Gener" tres cops -- sense dir de quin any era
+            # cadascuna, o sigui que el fitxer no es podia fer servir.
+            st.markdown(filedownload(table_monthly(_mesos_any, selected_year_n), f"{selected_index}_Espanya_{selected_year_n}.xlsx"), unsafe_allow_html=True)
             st.markdown("")
             st.markdown("")
             # st.subheader("**DADES ANUALS**")
@@ -4311,7 +4467,7 @@ if selected == "Espanya":
             table_espanya_y = tidy_Catalunya_anual(DT_terr_y, ["Fecha","cons_ciment_Espanya"], min_year, annual_upper_bound("cons_ciment_Espanya"),["Any", "Consum de ciment"])
             table_espanya_q = table_espanya_q.dropna(axis=0).div(1000)
             table_espanya_y = table_espanya_y.dropna(axis=0).div(1000)
-            st_metric(label="**Consum de ciment** (Milers de tones)", value=f"""{indicator_year(table_espanya_y, table_espanya_q, str(selected_year_n), "Consum de ciment", "level"):,.0f}""", delta=f"""{indicator_year(table_espanya_y, table_espanya_m, str(selected_year_n), "Consum de ciment", "var", "month")}%""")
+            st_metric(label="**Consum de ciment** (Milers de tones)", value=f"""{indicator_year(table_espanya_y, table_espanya_q, str(selected_year_n), "Consum de ciment", "level", df_aux_alt=table_espanya_m):,.0f}""", delta=f"""{indicator_year(table_espanya_y, table_espanya_m, str(selected_year_n), "Consum de ciment", "var", "month", df_aux_alt=table_espanya_q)}%""")
             st.markdown("")
             st.markdown("")
             # st.subheader("**DADES TRIMESTRALS MÉS RECENTS**")
@@ -4341,28 +4497,34 @@ if selected == "Espanya":
             if selected_year_n==max_year:
                 left, left_center, right_center, right = st.columns((1,1,1,1))
                 with left:
-                    st_metric(label="**Euríbor a 3 mesos** (%)", value=f"""{indicator_year(table_espanya_y, table_espanya_q, str(selected_year_n), "Euríbor a 3 mesos", "level")}""", delta=f"""{indicator_year(table_espanya_y, table_espanya_m, str(selected_year_n), ["Euríbor a 3 mesos"], "diff", "month_aux")} p.b.""")
+                    st_metric(label="**Euríbor a 3 mesos** (%)", value=f"""{indicator_year(table_espanya_y, table_espanya_q, str(selected_year_n), "Euríbor a 3 mesos", "level", df_aux_alt=table_espanya_m)}""", delta=f"""{indicator_year(table_espanya_y, table_espanya_m, str(selected_year_n), ["Euríbor a 3 mesos"], "diff", "month_aux", df_aux_alt=table_espanya_q)} p.b.""")
                 with left_center:
-                    st_metric(label="**Euríbor a 6 mesos** (%)", value=f"""{indicator_year(table_espanya_y, table_espanya_q, str(selected_year_n), "Euríbor a 6 mesos", "level")}""", delta=f"""{indicator_year(table_espanya_y, table_espanya_m, str(selected_year_n), ["Euríbor a 6 mesos"], "diff", "month_aux")} p.b.""")
+                    st_metric(label="**Euríbor a 6 mesos** (%)", value=f"""{indicator_year(table_espanya_y, table_espanya_q, str(selected_year_n), "Euríbor a 6 mesos", "level", df_aux_alt=table_espanya_m)}""", delta=f"""{indicator_year(table_espanya_y, table_espanya_m, str(selected_year_n), ["Euríbor a 6 mesos"], "diff", "month_aux", df_aux_alt=table_espanya_q)} p.b.""")
                 with right_center:
-                    st_metric(label="**Euríbor a 1 any** (%)", value=f"""{indicator_year(table_espanya_y, table_espanya_q, str(selected_year_n), "Euríbor a 1 any", "level")}""", delta=f"""{indicator_year(table_espanya_y, table_espanya_m, str(selected_year_n), ["Euríbor a 1 any"], "diff", "month_aux")} p.b.""")
+                    st_metric(label="**Euríbor a 1 any** (%)", value=f"""{indicator_year(table_espanya_y, table_espanya_q, str(selected_year_n), "Euríbor a 1 any", "level", df_aux_alt=table_espanya_m)}""", delta=f"""{indicator_year(table_espanya_y, table_espanya_m, str(selected_year_n), ["Euríbor a 1 any"], "diff", "month_aux", df_aux_alt=table_espanya_q)} p.b.""")
                 with right:
-                    st_metric(label="**Tipus d'interès d'hipoteques** (%)", value=f"""{indicator_year(table_espanya_y, table_espanya_q, str(selected_year_n), "Tipus d'interès d'hipoteques", "level")}""", delta=f"""{indicator_year(table_espanya_y, table_espanya_m, str(selected_year_n), ["Tipus d'interès d'hipoteques"], "diff", "month_aux")} p.b.""")
+                    st_metric(label="**Tipus d'interès d'hipoteques** (%)", value=f"""{indicator_year(table_espanya_y, table_espanya_q, str(selected_year_n), "Tipus d'interès d'hipoteques", "level", df_aux_alt=table_espanya_m)}""", delta=f"""{indicator_year(table_espanya_y, table_espanya_m, str(selected_year_n), ["Tipus d'interès d'hipoteques"], "diff", "month_aux", df_aux_alt=table_espanya_q)} p.b.""")
             if selected_year_n!=max_year:
                 left, left_center, right_center, right = st.columns((1,1,1,1))
                 with left:
-                    st_metric(label="**Euríbor a 3 mesos** (%)", value=f"""{indicator_year(table_espanya_y, table_espanya_q, str(selected_year_n), "Euríbor a 3 mesos", "level")}""", delta=f"""{indicator_year(table_espanya_y, table_espanya_m, str(selected_year_n), "Euríbor a 3 mesos", "diff", "month")} p.b.""")
+                    st_metric(label="**Euríbor a 3 mesos** (%)", value=f"""{indicator_year(table_espanya_y, table_espanya_q, str(selected_year_n), "Euríbor a 3 mesos", "level", df_aux_alt=table_espanya_m)}""", delta=f"""{indicator_year(table_espanya_y, table_espanya_m, str(selected_year_n), "Euríbor a 3 mesos", "diff", "month", df_aux_alt=table_espanya_q)} p.b.""")
                 with left_center:
-                    st_metric(label="**Euríbor a 6 mesos** (%)", value=f"""{indicator_year(table_espanya_y, table_espanya_q, str(selected_year_n), "Euríbor a 6 mesos", "level")}""", delta=f"""{indicator_year(table_espanya_y, table_espanya_m, str(selected_year_n), "Euríbor a 6 mesos", "diff", "month")} p.b.""")
+                    st_metric(label="**Euríbor a 6 mesos** (%)", value=f"""{indicator_year(table_espanya_y, table_espanya_q, str(selected_year_n), "Euríbor a 6 mesos", "level", df_aux_alt=table_espanya_m)}""", delta=f"""{indicator_year(table_espanya_y, table_espanya_m, str(selected_year_n), "Euríbor a 6 mesos", "diff", "month", df_aux_alt=table_espanya_q)} p.b.""")
                 with right_center:
-                    st_metric(label="**Euríbor a 1 any** (%)", value=f"""{indicator_year(table_espanya_y, table_espanya_q, str(selected_year_n), "Euríbor a 1 any", "level")}""", delta=f"""{indicator_year(table_espanya_y, table_espanya_m, str(selected_year_n), "Euríbor a 1 any", "diff", "month")} p.b.""")
+                    st_metric(label="**Euríbor a 1 any** (%)", value=f"""{indicator_year(table_espanya_y, table_espanya_q, str(selected_year_n), "Euríbor a 1 any", "level", df_aux_alt=table_espanya_m)}""", delta=f"""{indicator_year(table_espanya_y, table_espanya_m, str(selected_year_n), "Euríbor a 1 any", "diff", "month", df_aux_alt=table_espanya_q)} p.b.""")
                 with right:
-                    st_metric(label="**Tipus d'interès d'hipoteques** (%)", value=f"""{indicator_year(table_espanya_y, table_espanya_q, str(selected_year_n), "Tipus d'interès d'hipoteques", "level")}""", delta=f"""{indicator_year(table_espanya_y, table_espanya_m, str(selected_year_n), "Tipus d'interès d'hipoteques", "diff", "month")} p.b.""")
+                    st_metric(label="**Tipus d'interès d'hipoteques** (%)", value=f"""{indicator_year(table_espanya_y, table_espanya_q, str(selected_year_n), "Tipus d'interès d'hipoteques", "level", df_aux_alt=table_espanya_m)}""", delta=f"""{indicator_year(table_espanya_y, table_espanya_m, str(selected_year_n), "Tipus d'interès d'hipoteques", "diff", "month", df_aux_alt=table_espanya_q)} p.b.""")
             st.markdown("")
             st.markdown("")
             # st.subheader("**DADES TRIMESTRALS MÉS RECENTS**")
-            st.markdown(taula_html_es(table_monthly(table_espanya_m[(table_espanya_m["Fecha"]>=f"{str(selected_year_n)}-01-01") & (table_espanya_m["Fecha"]<f"{str(selected_year_n+1)}-01-01")], selected_year_n)), unsafe_allow_html=True)
-            st.markdown(filedownload(table_monthly(table_espanya_m, 2024), f"{selected_index}_Espanya.xlsx"), unsafe_allow_html=True)
+            _mesos_any = table_espanya_m[(table_espanya_m["Fecha"]>=f"{str(selected_year_n)}-01-01") & (table_espanya_m["Fecha"]<f"{str(selected_year_n+1)}-01-01")]
+            st.markdown(taula_html_es(table_monthly(_mesos_any, selected_year_n)), unsafe_allow_html=True)
+            # L'Excel porta NOMÉS l'any triat al desplegable, igual que la taula de
+            # pantalla. Abans arrencava en un any fix (2023 aquí i 2024 als tipus
+            # d'interès, sense cap motiu) i sortien 32 columnes amb el nom del mes
+            # repetit tres vegades -- "Gener" tres cops -- sense dir de quin any era
+            # cadascuna, o sigui que el fitxer no es podia fer servir.
+            st.markdown(filedownload(table_monthly(_mesos_any, selected_year_n), f"{selected_index}_Espanya_{selected_year_n}.xlsx"), unsafe_allow_html=True)
             st.markdown("")
             st.markdown("")
             # st.subheader("**DADES ANUALS**")
@@ -4386,9 +4548,9 @@ if selected == "Espanya":
             table_espanya_y = table_espanya_y[["Nombre d'hipoteques", "Import d'hipoteques"]]
             left, right = st.columns((1,1))
             with left:
-                st_metric(label="**Nombre d'hipoteques**", value=f"""{indicator_year(table_espanya_y, table_espanya_q, str(selected_year_n), "Nombre d'hipoteques", "level"):,.0f}""", delta=f"""{indicator_year(table_espanya_y, table_espanya_m, str(selected_year_n), "Nombre d'hipoteques", "var", "month_aux")}%""")
+                st_metric(label="**Nombre d'hipoteques**", value=f"""{indicator_year(table_espanya_y, table_espanya_q, str(selected_year_n), "Nombre d'hipoteques", "level", df_aux_alt=table_espanya_m):,.0f}""", delta=f"""{indicator_year(table_espanya_y, table_espanya_m, str(selected_year_n), "Nombre d'hipoteques", "var", "month_aux", df_aux_alt=table_espanya_q)}%""")
             with right:
-                st_metric(label="**Import d'hipoteques** (Milers d'euros)", value=f"""{indicator_year(table_espanya_y, table_espanya_q, str(selected_year_n), "Import d'hipoteques", "level"):,.0f}""", delta=f"""{indicator_year(table_espanya_y, table_espanya_m, str(selected_year_n), "Import d'hipoteques", "var", "month_aux")}%""")
+                st_metric(label="**Import d'hipoteques** (Milers d'euros)", value=f"""{indicator_year(table_espanya_y, table_espanya_q, str(selected_year_n), "Import d'hipoteques", "level", df_aux_alt=table_espanya_m):,.0f}""", delta=f"""{indicator_year(table_espanya_y, table_espanya_m, str(selected_year_n), "Import d'hipoteques", "var", "month_aux", df_aux_alt=table_espanya_q)}%""")
 
             selected_columns = ["Nombre d'hipoteques", "Import d'hipoteques"]
             st.markdown("")
@@ -4421,9 +4583,9 @@ if selected == "Espanya":
             table_esp_y = tidy_Catalunya_anual(DT_terr_y, ["Fecha"] + concatenate_lists(["iniviv_","finviv_"], "Nacional")+ concatenate_lists(["calprov_", "calprovpub_", "calprovpriv_", "caldef_", "caldefpub_", "caldefpriv_"], "Espanya"), min_year, annual_upper_bound("iniviv_Nacional"),["Any", "Habitatges iniciats", "Habitatges acabats", "Qualificacions provisionals d'HPO", "Qualificacions provisionals d'HPO (Promotor públic)", "Qualificacions provisionals d'HPO (Promotor privat)", "Qualificacions definitives d'HPO",  "Qualificacions definitives d'HPO (Promotor públic)", "Qualificacions definitives d'HPO (Promotor privat)"])
             left, right = st.columns((1,1))
             with left:
-                st_metric(label="**Habitatges iniciats**", value=f"""{indicator_year(table_esp_y, table_esp, str(selected_year_n), "Habitatges iniciats", "level"):,.0f}""", delta=f"""{indicator_year(table_esp_y, table_esp_m, str(selected_year_n), "Habitatges iniciats", "var", "month")}%""")
+                st_metric(label="**Habitatges iniciats**", value=f"""{indicator_year(table_esp_y, table_esp_m, str(selected_year_n), "Habitatges iniciats", "level", df_aux_alt=table_esp):,.0f}""", delta=f"""{indicator_year(table_esp_y, table_esp_m, str(selected_year_n), "Habitatges iniciats", "var", "month", df_aux_alt=table_esp)}%""")
             with right:
-                st_metric(label="**Habitatges acabats**", value=f"""{indicator_year(table_esp_y, table_esp, str(selected_year_n), "Habitatges acabats", "level"):,.0f}""", delta=f"""{indicator_year(table_esp_y, table_esp_m, str(selected_year_n), "Habitatges acabats", "var","month")}%""")
+                st_metric(label="**Habitatges acabats**", value=f"""{indicator_year(table_esp_y, table_esp_m, str(selected_year_n), "Habitatges acabats", "level", df_aux_alt=table_esp):,.0f}""", delta=f"""{indicator_year(table_esp_y, table_esp_m, str(selected_year_n), "Habitatges acabats", "var", "month", df_aux_alt=table_esp)}%""")
 
             left, right = st.columns((1,1))    
             with left:
@@ -4640,10 +4802,10 @@ if selected == "Catalunya":
             left, right = st.columns((1,1))
             with left:
                 st_metric(label="**Total població ocupada** (Milers)", value=f"""{indicator_year(table_catalunya_y, table_catalunya_q, str(selected_year_n), "Total població ocupada", "level"):,.0f}""", delta=f"""{indicator_year(table_catalunya_y, table_catalunya_q, str(selected_year_n), "Total població ocupada", "var")}%""")
-                st_metric(label="**Atur registrat del sector de la construcció**", value=f"""{indicator_year(table_catalunya_y, table_catalunya_q, str(selected_year_n), "Atur registrat del sector de la construcció", "level"):,.0f}""", delta=f"""{indicator_year(table_catalunya_y, table_catalunya_m, str(selected_year_n), "Atur registrat del sector de la construcció", "var", "month")}%""")
+                st_metric(label="**Atur registrat del sector de la construcció**", value=f"""{indicator_year(table_catalunya_y, table_catalunya_q, str(selected_year_n), "Atur registrat del sector de la construcció", "level", df_aux_alt=table_catalunya_m):,.0f}""", delta=f"""{indicator_year(table_catalunya_y, table_catalunya_m, str(selected_year_n), "Atur registrat del sector de la construcció", "var", "month", df_aux_alt=table_catalunya_q)}%""")
             with right:
                 st_metric(label="**Ocupació del sector de la construcció** (Milers)", value=f"""{indicator_year(table_catalunya_y, table_catalunya_q, str(selected_year_n), "Ocupació del sector de la construcció", "level"):,.0f}""", delta=f"""{indicator_year(table_catalunya_y, table_catalunya_q, str(selected_year_n), "Ocupació del sector de la construcció", "var")}%""")
-                st_metric(label="**Afiliats del sector de la construcció**", value=f"""{indicator_year(table_catalunya_y, table_catalunya_q, str(selected_year_n), "Afiliats del sector de la construcció", "level"):,.0f}""", delta=f"""{indicator_year(table_catalunya_y, table_catalunya_m, str(selected_year_n), "Afiliats del sector de la construcció", "var", "month")}%""")
+                st_metric(label="**Afiliats del sector de la construcció**", value=f"""{indicator_year(table_catalunya_y, table_catalunya_q, str(selected_year_n), "Afiliats del sector de la construcció", "level", df_aux_alt=table_catalunya_m):,.0f}""", delta=f"""{indicator_year(table_catalunya_y, table_catalunya_m, str(selected_year_n), "Afiliats del sector de la construcció", "var", "month", df_aux_alt=table_catalunya_q)}%""")
             st.markdown("")
             st.markdown("")
             # st.subheader("**DADES TRIMESTRALS MÉS RECENTS**")
@@ -4703,7 +4865,7 @@ if selected == "Catalunya":
 
             table_catalunya_q = table_catalunya_q.dropna(axis=0).div(1000)
             table_catalunya_y = table_catalunya_y.dropna(axis=0).div(1000)
-            st_metric(label="**Consum de ciment** (Milers de tones)", value=f"""{indicator_year(table_catalunya_y, table_catalunya_q, str(selected_year_n), "Consum de ciment", "level"):,.0f}""", delta=f"""{indicator_year(table_catalunya_y, table_catalunya_m, str(selected_year_n), "Consum de ciment", "var", "month")}%""")
+            st_metric(label="**Consum de ciment** (Milers de tones)", value=f"""{indicator_year(table_catalunya_y, table_catalunya_q, str(selected_year_n), "Consum de ciment", "level", df_aux_alt=table_catalunya_m):,.0f}""", delta=f"""{indicator_year(table_catalunya_y, table_catalunya_m, str(selected_year_n), "Consum de ciment", "var", "month", df_aux_alt=table_catalunya_q)}%""")
             st.markdown("")
             st.markdown("")
             # st.subheader("**DADES TRIMESTRALS MÉS RECENTS**")
@@ -4731,9 +4893,9 @@ if selected == "Catalunya":
             table_catalunya_y = table_catalunya_y[["Nombre d'hipoteques", "Import d'hipoteques"]]
             left, right = st.columns((1,1))
             with left:
-                st_metric(label="**Nombre d'hipoteques**", value=f"""{indicator_year(table_catalunya_y, table_catalunya_q, str(selected_year_n), "Nombre d'hipoteques", "level"):,.0f}""", delta=f"""{indicator_year(table_catalunya_y, table_catalunya_m, str(selected_year_n), "Nombre d'hipoteques", "var", "month_aux")}%""")
+                st_metric(label="**Nombre d'hipoteques**", value=f"""{indicator_year(table_catalunya_y, table_catalunya_q, str(selected_year_n), "Nombre d'hipoteques", "level", df_aux_alt=table_catalunya_m):,.0f}""", delta=f"""{indicator_year(table_catalunya_y, table_catalunya_m, str(selected_year_n), "Nombre d'hipoteques", "var", "month_aux", df_aux_alt=table_catalunya_q)}%""")
             with right:
-                st_metric(label="**Import d'hipoteques** (Milers €)", value=f"""{indicator_year(table_catalunya_y, table_catalunya_q, str(selected_year_n), "Import d'hipoteques", "level"):,.0f}""", delta=f"""{indicator_year(table_catalunya_y, table_catalunya_m, str(selected_year_n), "Import d'hipoteques", "var", "month_aux")}%""")
+                st_metric(label="**Import d'hipoteques** (Milers €)", value=f"""{indicator_year(table_catalunya_y, table_catalunya_q, str(selected_year_n), "Import d'hipoteques", "level", df_aux_alt=table_catalunya_m):,.0f}""", delta=f"""{indicator_year(table_catalunya_y, table_catalunya_m, str(selected_year_n), "Import d'hipoteques", "var", "month_aux", df_aux_alt=table_catalunya_q)}%""")
             selected_columns = ["Nombre d'hipoteques", "Import d'hipoteques"]
             st.markdown("")
             st.markdown("")
@@ -5293,7 +5455,7 @@ if selected == "Províncies i àmbits":
                 left, center, right = st.columns((1,1,1))
                 with left:
                     try:
-                        st_metric(label="**Habitatges iniciats**", value=f"""{indicator_year(table_province_y, table_province_m, str(selected_year_n), "Habitatges iniciats", "level"):,.0f}""", delta=f"""{indicator_year(table_province_y, table_province_m, str(selected_year_n), "Habitatges iniciats", "var", "month")}%""")
+                        st_metric(label="**Habitatges iniciats**", value=f"""{indicator_year(table_province_y, table_province_m, str(selected_year_n), "Habitatges iniciats", "level", df_aux_alt=table_province):,.0f}""", delta=f"""{indicator_year(table_province_y, table_province_m, str(selected_year_n), "Habitatges iniciats", "var", "month", df_aux_alt=table_province)}%""")
                     except IndexError:
                         st_metric(label="**Habitatges iniciats**", value="No disponible")          
                 with center:
@@ -5309,7 +5471,7 @@ if selected == "Províncies i àmbits":
                 left, center, right = st.columns((1,1,1))
                 with left:
                     try:
-                        st_metric(label="**Habitatges acabats**", value=f"""{indicator_year(table_province_y, table_province, str(selected_year_n), "Habitatges acabats", "level"):,.0f}""", delta=f"""{indicator_year(table_province_y, table_province_m, str(selected_year_n), "Habitatges acabats", "var", "month")}%""")
+                        st_metric(label="**Habitatges acabats**", value=f"""{indicator_year(table_province_y, table_province_m, str(selected_year_n), "Habitatges acabats", "level", df_aux_alt=table_province):,.0f}""", delta=f"""{indicator_year(table_province_y, table_province_m, str(selected_year_n), "Habitatges acabats", "var", "month", df_aux_alt=table_province)}%""")
                     except IndexError:
                         st_metric(label="**Habitatges acabats**", value="No disponible")      
                 with center:
@@ -5643,7 +5805,7 @@ if selected=="Comarques":
             left, center, right = st.columns((1,1,1))
             with left:
                 try:
-                    st_metric(label="**Habitatges iniciats**", value=f"""{indicator_year(table_com_y, table_com, str(selected_year_n), "Habitatges iniciats", "level"):,.0f}""", delta=f"""{indicator_year(table_com_y, table_com_m, str(selected_year_n), "Habitatges iniciats", "var", "month")}%""")
+                    st_metric(label="**Habitatges iniciats**", value=f"""{indicator_year(table_com_y, table_com_m, str(selected_year_n), "Habitatges iniciats", "level", df_aux_alt=table_com):,.0f}""", delta=f"""{indicator_year(table_com_y, table_com_m, str(selected_year_n), "Habitatges iniciats", "var", "month", df_aux_alt=table_com)}%""")
                 except IndexError:
                     st_metric(label="**Habitatges iniciats**", value="No disponible")
             with center:
@@ -5659,7 +5821,7 @@ if selected=="Comarques":
             left, center, right = st.columns((1,1,1))
             with left:
                 try:
-                    st_metric(label="**Habitatges acabats**", value=f"""{indicator_year(table_com_y, table_com, str(selected_year_n), "Habitatges acabats", "level"):,.0f}""", delta=f"""{indicator_year(table_com_y, table_com_m, str(selected_year_n), "Habitatges acabats", "var", "month")}%""")
+                    st_metric(label="**Habitatges acabats**", value=f"""{indicator_year(table_com_y, table_com_m, str(selected_year_n), "Habitatges acabats", "level", df_aux_alt=table_com):,.0f}""", delta=f"""{indicator_year(table_com_y, table_com_m, str(selected_year_n), "Habitatges acabats", "var", "month", df_aux_alt=table_com)}%""")
                 except IndexError:
                     st_metric(label="**Habitatges acabats**", value="No disponible")          
             with center:
@@ -6432,7 +6594,7 @@ if selected=="Districtes de Barcelona":
                 try:
                     st_metric(label="**Habitatges iniciats**", value=f"""{indicator_year(table_dis_y, table_dis, str(selected_year_n), "Habitatges iniciats", "level"):,.0f}""", delta=f"""{indicator_year(table_dis_y, table_dis, str(selected_year_n), "Habitatges iniciats", "var")}%""")
                 except IndexError:
-                    st_metric(label="**Habitatges iniciats**", value="0")
+                    st_metric(label="**Habitatges iniciats**", value="No disponible")
             with center:
                 try:
                     st_metric(label="**Habitatges iniciats plurifamiliars**", value=f"""{indicator_year(table_dis_y, table_dis, str(selected_year_n), "Habitatges iniciats plurifamiliars", "level"):,.0f}""", delta=f"""{indicator_year(table_dis_y, table_dis, str(selected_year_n), "Habitatges iniciats plurifamiliars", "var")}%""")
@@ -6447,7 +6609,7 @@ if selected=="Districtes de Barcelona":
                 try:
                     st_metric(label="**Habitatges acabats**", value=f"""{indicator_year(table_dis_y, table_dis, str(selected_year_n), "Habitatges acabats", "level"):,.0f}""", delta=f"""{indicator_year(table_dis_y, table_dis, str(selected_year_n), "Habitatges acabats", "var")}%""")
                 except IndexError:
-                    st_metric(label="**Habitatges acabats**", value="0")
+                    st_metric(label="**Habitatges acabats**", value="No disponible")
             with center:
                 try:
                     st_metric(label="**Habitatges acabats plurifamiliars**", value=f"""{indicator_year(table_dis_y, table_dis, str(selected_year_n), "Habitatges acabats plurifamiliars", "level"):,.0f}""", delta=f"""{indicator_year(table_dis_y, table_dis, str(selected_year_n), "Habitatges acabats plurifamiliars", "var")}%""")
@@ -6675,7 +6837,7 @@ if selected=="Mapa interactiu":
         any_mapa = st.selectbox("**Selecciona un any:**", anys_mapa, index=anys_mapa.index(index_year_mapa), key="map_any")
 
     var_prefix = opcions[label]
-    map_df = tmp_map(DT_mun_y_all, shapefile_mun, maestro_mun, var_prefix, any_mapa)
+    map_df = tmp_map(DT_mun_y_all, shapefile_mun, maestro_mun, var_prefix, any_mapa, name_var_prefix=label)
     st_folium(
         folium_mapa_municipis(map_df, any_mapa, label),
         use_container_width=True,
