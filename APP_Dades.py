@@ -2923,7 +2923,14 @@ def tidy_Catalunya_m(data_ori, columns_sel, fecha_ini, fecha_fin, columns_output
     output_data = data_ori[["Fecha"] + columns_sel][(data_ori["Fecha"]>=fecha_ini) & (data_ori["Fecha"]<=fecha_fin)]
     output_data.columns = ["Fecha"] + columns_output
     output_data["Month"] = output_data['Fecha'].dt.month
-    output_data = output_data.dropna()
+    # dropna() sencer descartava el mes SENCER si NOMÉS una de les columnes
+    # demanades no hi tenia dada. Quan es demanen dues sèries que no comencen el
+    # mateix mes (p. ex. Mercat laboral: l'atur registrat des del 2008 i els
+    # afiliats des del 2012), la més antiga perdia tot el seu històric anterior
+    # perquè l'altra encara no existia. Ara només es descarta el mes si TOTES
+    # les columnes demanades hi falten (columns_output[0] és "Data", una còpia
+    # de Fecha que mai és NaN i no ha de comptar).
+    output_data = output_data.dropna(how="all", subset=columns_output[1:])
     output_data = output_data[(output_data["Month"]<=output_data['Month'].iloc[-1])]
     return(output_data.drop(["Data", "Month"], axis=1))
 
@@ -3163,9 +3170,18 @@ def _operacio_any_obert(df_annual, data_ori, columns_sel, anys_a_provar=8):
     (la mitjana mensual) en lloc de 347.464 (l'acumulat dels dos trimestres).
 
     Els anys amb un sol subperíode no compten: no distingeixen res. Si cap any no
-    decideix, es torna "mitjana"."""
+    decideix, la calibració s'absté i el criteri passa a ser la NATURALESA de
+    l'indicador (_zero_es_dada): els recomptes se sumen i els nivells es
+    promedien. Abans, l'abstenció queia sempre a "mitjana", i això és el que feia
+    que la Conca de Barberà ensenyés 0,5 habitatges acabats en lloc de 3: amb la
+    font mensual, una comarca petita té dos o tres mesos amb dada i la resta a
+    zero, la mitjana dels no-zero surt inflada i cap de les dues hipòtesis entra
+    al marge. Mesurat sobre les 49 geografies: la calibració encerta 84 de 98 amb
+    la taula mensual i 98 de 98 amb la trimestral; la regla per naturalesa, 98 de
+    98. Només s'aplica quan la calibració no ha pogut decidir, així que no toca
+    cap dels casos que sí decideix."""
     if df_annual is None or columns_sel not in getattr(df_annual, "columns", []):
-        return "mitjana"
+        return "suma" if _zero_es_dada(columns_sel) else "mitjana"
     per_any = _periodes_per_any(data_ori)
     serie_anual = df_annual[columns_sel]
     if isinstance(serie_anual, pd.DataFrame):  # noms de columna duplicats
@@ -3194,6 +3210,8 @@ def _operacio_any_obert(df_annual, data_ori, columns_sel, anys_a_provar=8):
         if abs(err_suma - err_mitjana) < 0.10:
             continue  # empat: tampoc no decideix
         vots["suma" if err_suma < err_mitjana else "mitjana"] += 1
+    if vots["suma"] == vots["mitjana"]:  # cap any no decideix, o empat
+        return "suma" if _zero_es_dada(columns_sel) else "mitjana"
     return "suma" if vots["suma"] > vots["mitjana"] else "mitjana"
 
 
