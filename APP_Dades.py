@@ -8063,22 +8063,9 @@ def oferta_text_resum_mun_dis(df_hab, geo, columna_geo, any_estudi):
     """
 
 
-def oferta_filedownload(df, filename, format_columns=None):
-    """format_columns: {etiqueta_columna: format_excel}, opcional. Per defecte totes
-    les columnes numèriques porten "#,##0" (comportament d'abans, sense canvis per a
-    Municipis/Districtes). Serveix per a columnes com la variació anual de promocions,
-    que ha de portar un decimal i no arrodonir-se a l'enter."""
+def oferta_filedownload(df, filename):
     from openpyxl.styles import Font, PatternFill, Alignment, Border
     from openpyxl.utils import get_column_letter
-
-    format_columns = format_columns or {}
-    _cols_amb_format = {}
-    for etiqueta, fmt in format_columns.items():
-        try:
-            posicio = list(df.columns).index(etiqueta)
-        except ValueError:
-            continue
-        _cols_amb_format[posicio + 2] = fmt  # +1 índex (columna A) + 1 base-1 d'Excel
 
     header_rows = getattr(df.columns, "nlevels", 1)
     sheet_name = re.sub(r'[\\/*?:\[\]]', "_", filename.rsplit(".", 1)[0])[:31] or "Dades"
@@ -8109,7 +8096,7 @@ def oferta_filedownload(df, filename, format_columns=None):
             for col_idx in range(2, ws.max_column + 1):
                 cell = ws.cell(row_idx, col_idx)
                 if isinstance(cell.value, (int, float)):
-                    cell.number_format = _cols_amb_format.get(col_idx, "#,##0")
+                    cell.number_format = "#,##0"
                 cell.fill = ZEBRA_FILL if (row_idx - data_start) % 2 == 1 else WHITE_FILL
         for row in ws.iter_rows(min_row=1, max_row=ws.max_row):
             for cell in row:
@@ -8219,7 +8206,7 @@ def oferta_promocions_disponibles():
 @st.cache_data(show_spinner=False)
 def oferta_construir_df_promocions(df):
     """Agregat pur de promocions: period_id, Any, Semestre, Nivell, GEO,
-    Nombre_promocions, Variacio_anual_pct. Només Catalunya, províncies i àmbits
+    Nombre_promocions. Només Catalunya, províncies i àmbits
     territorials -- sense desglossament municipal ni per tipologia (decisió tancada,
     vegeu el .md): una promoció pot barrejar unifamiliar i plurifamiliar."""
     files = []
@@ -8238,26 +8225,11 @@ def oferta_construir_df_promocions(df):
                     "Nivell": nom_nivell, "GEO": geo,
                     "Nombre_promocions": int(grup["development_id"].nunique()),
                 })
-    resultat = pd.DataFrame(files)
-
-    # Variació contra el MATEIX semestre de l'any anterior, buscat explícitament per
-    # clau (Nivell, GEO, Semestre, Any-1) -- mai la fila anterior sense comprovar la
-    # distància temporal, ni sumar semestres.
-    previ = resultat.rename(columns={"Nombre_promocions": "_previ"})[
-        ["Nivell", "GEO", "Semestre", "Any", "_previ"]
-    ].copy()
-    previ["Any"] = previ["Any"] + 1
-    resultat = resultat.merge(previ, on=["Nivell", "GEO", "Semestre", "Any"], how="left")
-    actual = resultat["Nombre_promocions"].astype(float)
-    previ_val = resultat["_previ"]
-    resultat["Variacio_anual_pct"] = np.where(
-        previ_val.notna() & (previ_val > 0), 100 * (actual / previ_val - 1), np.nan
-    )
-    return resultat.drop(columns=["_previ"])
+    return pd.DataFrame(files)
 
 
 def oferta_integrar_promocions(taula_habitatges, df_promocions, nivell, geo, periodes_visibles):
-    """Afegeix el bloc PROMOCIONS (nombre + variació anual) davant de les columnes
+    """Afegeix el bloc PROMOCIONS (nombre de promocions) davant de les columnes
     d'habitatges de `taula_habitatges` (sortida de oferta_taula_comparativa), sense
     mutar-la. No fa cap `merge` en cru amb habitatges: `df_promocions` ja ve agregat
     per Nivell/GEO/Any (oferta_construir_df_promocions) i aquí només es filtra,
@@ -8273,28 +8245,12 @@ def oferta_integrar_promocions(taula_habitatges, df_promocions, nivell, geo, per
         raise ValueError(f"Clau Nivell/GEO/Any duplicada a promocions per a {nivell}/{geo_valor}.")
 
     nombre = sub.set_index("Any")["Nombre_promocions"].reindex(taula_habitatges.index)
-    variacio = sub.set_index("Any")["Variacio_anual_pct"].reindex(taula_habitatges.index)
 
     bloc = pd.DataFrame({
         ("PROMOCIONS", "Nombre de promocions"): nombre,
-        ("PROMOCIONS", "Variació anual (%)"): variacio,
     }, index=taula_habitatges.index)
     bloc.columns = pd.MultiIndex.from_tuples(bloc.columns)
     return pd.concat([bloc, taula_habitatges], axis=1)
-
-
-def oferta_taula_html_promocions(df):
-    """Com taula_html_es(df, precision=0) però amb un decimal a la columna de
-    variació de promocions -- amb precision=0 es perdria (p. ex. -4,7966...% es
-    veuria com -5%). La resta de columnes (habitatges i el recompte de promocions)
-    conserva el mateix format que ja tenien."""
-    col_variacio = ("PROMOCIONS", "Variació anual (%)")
-    formatters = {c: "{:,.0f}" for c in df.columns if c != col_variacio}
-    if col_variacio in df.columns:
-        formatters[col_variacio] = "{:,.1f}"
-    return (df.style
-              .format(formatters, thousands=".", decimal=",", na_rep="—")
-              .to_html())
 
 
 @st.cache_data(show_spinner=False)
@@ -8941,7 +8897,7 @@ if selected == "Estudi d'Oferta Obra Nova":
             taula_cat_2025 = _oferta_amb_promocions(
                 oferta_taula_comparativa(oferta_df_final, "Catalunya", None, 2025, 2025), "Catalunya", None, [2025]
             )
-            st.markdown(oferta_taula_html_promocions(taula_cat_2025), unsafe_allow_html=True)
+            st.markdown(taula_html_es(taula_cat_2025, precision=0), unsafe_allow_html=True)
         else:
             st.write("<p>La comparativa es calcula a partir de les dades deduplicades dels dos semestres analitzats (2025 i 2026). La lectura s'ha de fer com una comparació entre semestres equivalents.</p>", unsafe_allow_html=True)
             oferta_mostra_text_informe("territori", selected_edition)
@@ -8949,11 +8905,8 @@ if selected == "Estudi d'Oferta Obra Nova":
             taula_cat = _oferta_amb_promocions(
                 oferta_taula_comparativa(oferta_df_final, "Catalunya", None, 2025, 2026), "Catalunya", None, [2025, 2026]
             )
-            st.markdown(oferta_taula_html_promocions(taula_cat), unsafe_allow_html=True)
-            st.markdown(oferta_filedownload(
-                taula_cat, "Estudi_oferta_Catalunya_APCE_2025_2026.xlsx",
-                format_columns={("PROMOCIONS", "Variació anual (%)"): "0.0"},
-            ), unsafe_allow_html=True)
+            st.markdown(taula_html_es(taula_cat, precision=0), unsafe_allow_html=True)
+            st.markdown(oferta_filedownload(taula_cat, "Estudi_oferta_Catalunya_APCE_2025_2026.xlsx"), unsafe_allow_html=True)
 
     if oferta_selected == "Províncies i àmbits":
         left, center, right = st.columns((1, 1, 1))
@@ -8985,11 +8938,8 @@ if selected == "Estudi d'Oferta Obra Nova":
             oferta_taula_comparativa(oferta_df_final, nivell_geo, selected_geo, 2025, int(selected_edition)),
             nivell_geo, selected_geo, _periodes_geo,
         )
-        st.markdown(oferta_taula_html_promocions(taula_geo), unsafe_allow_html=True)
-        st.markdown(oferta_filedownload(
-            taula_geo, f"Estudi_oferta_APCE_{selected_geo}.xlsx",
-            format_columns={("PROMOCIONS", "Variació anual (%)"): "0.0"},
-        ), unsafe_allow_html=True)
+        st.markdown(taula_html_es(taula_geo, precision=0), unsafe_allow_html=True)
+        st.markdown(oferta_filedownload(taula_geo, f"Estudi_oferta_APCE_{selected_geo}.xlsx"), unsafe_allow_html=True)
 
         df_geo = oferta_filtra_geo(dades, columna_geo, selected_geo)
         fila_1_left, fila_1_right = st.columns((1, 1))

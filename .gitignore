@@ -29,3 +29,11 @@ Thumbs.db
 # pendents, el banc de proves i les mesures. Es queden al disc de treball; al
 # repositori no hi pinten res.
 /_revisio_calculs/
+/Docs_and_reviews/_revisio_calculs/
+
+# Arxiu local: codi antic, copies de dades i entrades originals d'Atlas.
+/arxiu/
+/Docs_and_reviews/historic/*
+!/Docs_and_reviews/historic/codi_antic/
+/Docs_and_reviews/historic/codi_antic/*
+!/Docs_and_reviews/historic/codi_antic/APP_Dades_es.py
