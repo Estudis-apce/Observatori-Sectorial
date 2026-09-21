@@ -312,6 +312,11 @@ DATA_FILE_SIMPLE = "Resources/JSON/DT_simple.json"
 # Estudi d'Oferta de nova construcció: única font, l'Excel de l'Atlas (substitueix
 # l'antic proveïdor DT_oferta_conjuntura.json + fulls històrics 2019-2025).
 DATA_FILE_ATLAS_OFERTA = "Resources/JSON/BBDD_Atlas_trimmed.json"
+# Font independent: nombre de promocions (no d'habitatges) de l'Atlas. Cada fila hi és
+# una promoció dins d'una edició (period_id + development_id), no un habitatge -- no té
+# les columnes d'habitatge i no s'ha de barrejar amb DATA_FILE_ATLAS_OFERTA. Vegeu
+# _revisio_calculs/PROPOSTA_NUM_PROMOCIONS.md.
+DATA_FILE_ATLAS_PROMOCIONS = "Resources/JSON/BBDD_Promociones.json"
 
 # Informes sectorials APCE (PDF complet allotjat a apcebcn.cat): la imatge de portada
 # (ja present a la carpeta del projecte) enllaça amb el PDF corresponent.
@@ -468,6 +473,53 @@ def _es_num_str(s: str) -> str:
     def _swap(m):
         return m.group(0).replace(",", "\x00").replace(".", ",").replace("\x00", ".")
     return _ES_NUM_RE.sub(_swap, s)
+
+# ========== FONTS DELS INDICADORS ==========
+# Una sola font de veritat: el text de cada "Font:" viu aquí i mostra_font() el pinta al final
+# de cada pantalla d'indicador. Cap pàgina porta la font escrita a mà. Els noms els ha validat
+# l'usuari (vegeu _revisio_calculs/PLA_FONTS_PER_INDICADOR.md).
+_FONT_AGENCIA = "Agència de l'Habitatge de Catalunya"
+_FONT_INCASOL = "INCASÒL"
+_FONT_CIMENT = "Ministeri d'Indústria i Turisme a partir d'OFICEMEN"
+_FONT_OFERTA = "Estudi d'Oferta d'Obra Nova a partir de les dades facilitades per Atlas Real Estate Analytics"
+FONTS_INDICADORS = {
+    "Espanya": {
+        "Índex de Preus al Consum (IPC)": "INE",
+        "Consum de ciment": _FONT_CIMENT,
+        "Tipus d'interès": "Banc d'Espanya",
+        "Mercat hipotecari": "INE",
+        "Producció": "MIVAU",
+        "Compravendes": "INE",
+        "Preus": "MIVAU (valor tasat) i INE (índex de preus de l'habitatge)",
+    },
+    "Catalunya": {
+        "Mercat laboral": "EPA (INE) (població ocupada i ocupació del sector de la construcció); IDESCAT a partir de les xifres "
+                          "del Departament de Treball (atur registrat) i de l'INSS, règim general (afiliats)",
+        "Costos de construcció": "Butlletí Econòmic de la Construcció (BEC)",
+        "Consum de Ciment": _FONT_CIMENT,
+        "Mercat hipotecari": "INE",
+    },
+    # Catalunya (sector residencial), Províncies i àmbits, Comarques, Municipis i Districtes.
+    "Territori": {"Venda": _FONT_AGENCIA, "Lloguer": _FONT_INCASOL},
+    "Municipis": {
+        "Altres indicadors": "IDESCAT (població, naixements i matrimonis, base imposable de l'IRPF, IBI, pensionistes, "
+                             "parc de vehicles, residus i mercat laboral); Cens 2021 (INE) (llars i parc d'habitatges); "
+                             "INE, Atles de Distribució de Renda de les Llars (renda neta per llar)",
+    },
+    "Districtes": {
+        "Demografia i parc d'habitatge": "Cens 2021 (INE); INE, Atles de Distribució de Renda de les Llars (renda neta per llar)",
+    },
+    "Mapa": {"Renda mitjana de lloguer": _FONT_INCASOL},
+    "Estudi d'Oferta": _FONT_OFERTA,
+}
+
+
+def mostra_font(text):
+    """Línia "Font: …" (mateix estil que la resta de notes de l'app) al final d'una pantalla.
+    Si no hi ha text, no pinta res: així una pantalla apagada (p. ex. la Fitxa) no en porta."""
+    if text:
+        st.caption(f"Font: {text}")
+
 
 def st_metric(label=None, value=None, delta=None, **kwargs):
     """Embolcall de st.metric que mostra els números en format espanyol.
@@ -3475,7 +3527,7 @@ def _img_to_data_uri(path):
 
 
 @st.cache_data(show_spinner=False, max_entries=500)
-def _build_download_href(df, filename):
+def _build_download_href(df, filename, number_format="#,##0"):
     # Part cara (to_excel + base64, ~46 ms): es cacheja segons el contingut del
     # DataFrame i el nom del fitxer, per no regenerar l'Excel a cada rerun quan
     # les dades no han canviat. Es converteix a numèric perquè Excel ho tracti
@@ -3518,7 +3570,7 @@ def _build_download_href(df, filename):
             for col_idx in range(2, ws.max_column + 1):
                 cell = ws.cell(row_idx, col_idx)
                 if isinstance(cell.value, (int, float)):
-                    cell.number_format = "#,##0"
+                    cell.number_format = number_format
                 cell.fill = ZEBRA_FILL if (row_idx - data_start) % 2 == 1 else WHITE_FILL
         # Sense vores enlloc (evita els divisors negres per defecte d'algunes graelles).
         for row in ws.iter_rows(min_row=1, max_row=ws.max_row):
@@ -3537,12 +3589,12 @@ def _build_download_href(df, filename):
     return f"""<a href="data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,{b64}" download="{filename}">
     <button class="download-button">Descarregar</button></a>"""
 
-def filedownload(df, filename):
+def filedownload(df, filename, number_format="#,##0"):
     # Si rebem un Styler (table_trim / table_year), agafem les dades numèriques
     # crues (.data), que sí que són "hashables" per a la memòria cau.
     if hasattr(df, "data"):
         df = df.data
-    return _build_download_href(df, filename)
+    return _build_download_href(df, filename, number_format)
 
 # ========== PLOTLY HELPERS ==========
 def _plotly_titol(text, per_linia=70):
@@ -3716,6 +3768,24 @@ def stacked_bar_plotly(table_n, selection_n, title_main, title_y, year_ini, year
     layout = _plotly_layout(title_main, title_y, title_x="Any", barmode='stack')
 
     fig = go.Figure(data=traces, layout=layout)
+    return fig
+
+
+def stacked_bar_mensual_plotly(table_n, selection_n, title_main, title_y, title_x="Data"):
+    """Barres apilades al 100 % d'una sèrie MENSUAL les columnes de la qual ja sumen
+    100 (p. ex. proporció d'hipoteques a tipus fix i variable). L'eix va de 0 a 100
+    perquè la barra sempre arribi dalt del tot. Sense espai entre barres i amb una vora
+    del mateix color: amb ~200 barres estretes, qualsevol buit es veia com una ratlla blanca."""
+    plot_cat = _sense_cua_buida(table_n[selection_n])
+    colors = PLOTLY_PALETTE[:3]
+    traces = [
+        go.Bar(x=plot_cat.index, y=plot_cat[col], name=col,
+               marker=dict(color=colors[i % len(colors)], line=dict(color=colors[i % len(colors)], width=1.6)))
+        for i, col in enumerate(plot_cat.columns)
+    ]
+    layout = _plotly_layout(title_main, title_y, title_x=title_x, tickformat=".0f", barmode="stack", bargap=0)
+    fig = go.Figure(data=traces, layout=layout)
+    fig.update_yaxes(range=[0, 100])
     return fig
 
 # ==========================================================================
@@ -3943,6 +4013,7 @@ _NIVELL_PARAULES = (
     "població ocupada", "població activa", "població desocupada", "població inactiva",
     "ocupació del sector",
     "afiliats", "atur registrat", "consum de ciment",
+    "proporció d'hipoteques",
 )
 
 
@@ -4383,7 +4454,7 @@ if selected == "Espanya":
         selected_type = st.radio("**Selecciona un tipus d'indicador**", ("Sector residencial","Indicadors econòmics"), horizontal=True)
     with center:
         if selected_type=="Indicadors econòmics":
-            selected_index = st.selectbox("**Selecciona un indicador:**", ["Índex de Preus al Consum (IPC)", "Consum de ciment","Tipus d'interès", "Hipoteques"], key="espanya_indicador_economic")
+            selected_index = st.selectbox("**Selecciona un indicador:**", ["Índex de Preus al Consum (IPC)", "Consum de ciment","Tipus d'interès", "Mercat hipotecari"], key="espanya_indicador_economic")
         if selected_type=="Sector residencial":
             selected_index = st.selectbox("**Selecciona un indicador:**", ["Producció", "Compravendes", "Preus"], key="espanya_indicador_residencial")
     with right:
@@ -4398,7 +4469,7 @@ if selected == "Espanya":
             "Índex de Preus al Consum (IPC)": "IPC_Nacional_x",
             "Consum de ciment": "cons_ciment_Espanya",
             "Tipus d'interès": "Euribor_3m",
-            "Hipoteques": "hipon_Nacional",
+            "Mercat hipotecari": "hipon_Nacional",
         }.get(selected_index, "iniviv_Nacional")
         available_years, index_year = year_selector_options(_ref_col_espanya, df_quarterly=DT_terr, df_monthly=DT_monthly, df_annual=DT_terr_y)
         selected_year_n = st.selectbox("**Selecciona un any:**", available_years, available_years.index(index_year), key="espanya_any")
@@ -4554,7 +4625,17 @@ if selected == "Espanya":
                 st_plotly_chart(line_plotly(table_espanya_m.set_index("Fecha"), selected_columns, "Evolució mensual dels tipus d'interès (%)", "Tipus d'interès (%)",  "Fecha"), use_container_width=True, responsive=True)
             with right:
                 st_plotly_chart(bar_plotly(table_espanya_y, ["Euríbor a 1 any", "Tipus d'interès d'hipoteques"], "Evolució anual dels tipus d'interès (%)", "Tipus d'interès (%)",  2005), use_container_width=True, responsive=True)
-        if selected_index=="Hipoteques":
+        if selected_index=="Mercat hipotecari":
+            # Índex de la pàgina: aquesta pestanya és llarga i té tres blocs. Mateix estil i
+            # mateixos ancoratges (viab-toc / viab-anchor, scroll suau) que la resta d'índexs de l'app.
+            st.markdown(
+                '<div class="viab-toc">'
+                '<a href="#hipo-nombre">Nombre i import d\'hipoteques</a>'
+                '<a href="#hipo-tipus">Tipus d\'interès</a>'
+                '<a href="#hipo-constitucio">Tipus de constitució</a>'
+                '</div>', unsafe_allow_html=True,
+            )
+            st.markdown('<div id="hipo-nombre" class="viab-anchor"></div>', unsafe_allow_html=True)
             st.subheader("IMPORT I NOMBRE D'HIPOTEQUES INSCRITES EN ELS REGISTRES DE PROPIETAT")
             st.markdown(f'<div class="custom-box">ANY {selected_year_n}</div>', unsafe_allow_html=True)
             min_year=2008
@@ -4588,6 +4669,106 @@ if selected == "Espanya":
             with right:
                 st_plotly_chart(bar_plotly(table_espanya_y, ["Nombre d'hipoteques"], "Evolució anual del nombre d'hipoteques", "Nombre d'hipoteques",  2005), use_container_width=True, responsive=True)
                 st_plotly_chart(bar_plotly(table_espanya_y, ["Import d'hipoteques"], "Evolució anual de l'import d'hipoteques (Milers €)", "Import d'hipoteques",  2005), use_container_width=True, responsive=True)
+
+            # ==== Tipus d'interès i tipus de constitució de les hipoteques (INE) ====
+            # Bloc propi, just sota el del nombre d'hipoteques i amb el mateix selector d'any,
+            # però amb targetes, taules, Excel i gràfics apart. Només Espanya: l'INE no
+            # publica aquestes sèries per a Catalunya. Vegeu _revisio_calculs/PLA_HIPOTEQUES_TIPUS_I_IGC.md.
+            # No és el "Tipus d'interès d'hipoteques" del Banco de España de la pestanya Tipus
+            # d'interès: són dues fonts diferents i aquí la font va sempre indicada.
+            _ine_any_ini = 2009
+            _hipo_tipus_cols = ["tipototal_ine", "tipofijo_ine", "tipovariable_ine"]
+            _hipo_tipus_noms = ["Tipus d'interès total", "Tipus d'interès fix", "Tipus d'interès variable"]
+            _hipo_prop_cols = ["tipofijoprop_ine", "tipovariableprop_ine"]
+            _hipo_prop_noms = ["Proporció d'hipoteques a tipus fix", "Proporció d'hipoteques a tipus variable"]
+
+            def _taules_hipo_ine(cols, noms):
+                # Mateixes tres formes de taula que la resta de l'app: mensual, trimestral i anual
+                # (l'anual només arriba fins a l'últim any que la font ha publicat sencer).
+                _m = tidy_Catalunya_mensual(DT_monthly, ["Fecha"] + cols, f"{_ine_any_ini}-01-01", date_max_hipo_aux, ["Data"] + noms)
+                _m = _m[["Data"] + noms].reset_index(drop=True).rename(columns={"Data": "Fecha"})
+                _q = tidy_Catalunya(DT_terr, ["Fecha"] + cols, f"{_ine_any_ini}-01-01", date_max_hipo_aux, ["Data"] + noms)[noms]
+                _y = tidy_Catalunya_anual(DT_terr_y, ["Fecha"] + cols, _ine_any_ini, annual_upper_bound(cols[0]), ["Any"] + noms)[noms]
+                return _m, _q, _y
+
+            def _valor_hipo(x, decimals, suffix=""):
+                return "No disponible" if pd.isna(x) else f"{x:.{decimals}f}{suffix}"
+
+            def _targeta_hipo_ine(etiqueta, nom, m, q, y, decimals, punts):
+                # Nivell de l'any (any obert: mitjana dels mesos publicats) i variació PUNT A PUNT
+                # (últim mes publicat contra el mateix mes de l'any anterior; any tancat: desembre
+                # contra desembre), en p.b. als tipus i en p.p. a les proporcions.
+                try:
+                    nivell = indicator_year(y, q, str(selected_year_n), nom, "level", df_aux_alt=m)
+                    diff = indicator_year(y, m, str(selected_year_n), nom, "diff", "month", df_aux_alt=q)
+                except (IndexError, KeyError):
+                    st_metric(label=etiqueta, value="No disponible")
+                    return
+                if punts:
+                    delta = f"{diff} p.b."
+                else:
+                    delta = f"{round(diff / 100, 1)} p.p."
+                st_metric(label=etiqueta, value=_valor_hipo(nivell, decimals, "" if punts else "%"), delta=delta)
+
+            def _taula_anual_hipo(y):
+                t = y.reset_index()
+                return t[t["Any"] >= str(_ine_any_ini)].set_index("Any").T
+
+            st.markdown("")
+            st.markdown("")
+            st.markdown('<div id="hipo-tipus" class="viab-anchor"></div>', unsafe_allow_html=True)
+            st.subheader("TIPUS D'INTERÈS DE LES HIPOTEQUES SOBRE HABITATGES (INE)")
+            _tm, _tq, _ty = _taules_hipo_ine(_hipo_tipus_cols, _hipo_tipus_noms)
+            _c1, _c2, _c3 = st.columns((1, 1, 1))
+            for _col_ui, _nom in zip((_c1, _c2, _c3), _hipo_tipus_noms):
+                with _col_ui:
+                    _targeta_hipo_ine(f"**{_nom}** (%)", _nom, _tm, _tq, _ty, 2, True)
+            _mesos_tipus = _tm[(_tm["Fecha"] >= f"{selected_year_n}-01-01") & (_tm["Fecha"] < f"{selected_year_n + 1}-01-01")]
+            if _mesos_tipus.empty:
+                st.info(f"L'INE no publica el tipus d'interès de les hipoteques de l'any {selected_year_n}.")
+            else:
+                _t_mensual = table_monthly(_mesos_tipus, selected_year_n, rounded=False)
+                st.markdown(taula_html_es(_t_mensual, precision=2), unsafe_allow_html=True)
+                st.markdown(filedownload(_t_mensual, f"Tipus_interes_hipoteques_INE_Espanya_{selected_year_n}.xlsx", "0.00"), unsafe_allow_html=True)
+            st.markdown("")
+            st.markdown(taula_html_es(_taula_anual_hipo(_ty), precision=2), unsafe_allow_html=True)
+            st.markdown(filedownload(_taula_anual_hipo(_ty), "Tipus_interes_hipoteques_INE_Espanya_anual.xlsx", "0.00"), unsafe_allow_html=True)
+            left, right = st.columns((1, 1))
+            with left:
+                _fig = line_plotly(_tm.set_index("Fecha"), _hipo_tipus_noms, "Evolució mensual dels tipus d'interès de les hipoteques (%)", "Tipus d'interès (%)", "Data")
+                _fig.update_yaxes(tickformat=".1f")
+                st_plotly_chart(_fig, use_container_width=True, responsive=True)
+            with right:
+                _fig = bar_plotly(_ty, _hipo_tipus_noms, "Evolució anual dels tipus d'interès de les hipoteques (%)", "Tipus d'interès (%)", _ine_any_ini)
+                _fig.update_yaxes(tickformat=".1f")
+                st_plotly_chart(_fig, use_container_width=True, responsive=True)
+
+            st.markdown("")
+            st.markdown("")
+            st.markdown('<div id="hipo-constitucio" class="viab-anchor"></div>', unsafe_allow_html=True)
+            st.subheader("TIPUS DE CONSTITUCIÓ DE LES HIPOTEQUES: PROPORCIÓ DEL NOMBRE D'HIPOTEQUES (INE)")
+            _pm, _pq, _py = _taules_hipo_ine(_hipo_prop_cols, _hipo_prop_noms)
+            _c1, _c2 = st.columns((1, 1))
+            for _col_ui, _nom in zip((_c1, _c2), _hipo_prop_noms):
+                with _col_ui:
+                    _targeta_hipo_ine(f"**{_nom}**", _nom, _pm, _pq, _py, 1, False)
+            _mesos_prop = _pm[(_pm["Fecha"] >= f"{selected_year_n}-01-01") & (_pm["Fecha"] < f"{selected_year_n + 1}-01-01")]
+            if _mesos_prop.empty:
+                st.info(f"L'INE no publica la proporció d'hipoteques per tipus de constitució de l'any {selected_year_n}.")
+            else:
+                _p_mensual = table_monthly(_mesos_prop, selected_year_n, rounded=False)
+                st.markdown(taula_html_es(_p_mensual, precision=1), unsafe_allow_html=True)
+                st.markdown(filedownload(_p_mensual, f"Proporcio_hipoteques_tipus_constitucio_INE_Espanya_{selected_year_n}.xlsx", "0.0"), unsafe_allow_html=True)
+            st.markdown("")
+            st.markdown(taula_html_es(_taula_anual_hipo(_py), precision=1), unsafe_allow_html=True)
+            st.markdown(filedownload(_taula_anual_hipo(_py), "Proporcio_hipoteques_tipus_constitucio_INE_Espanya_anual.xlsx", "0.0"), unsafe_allow_html=True)
+            left, right = st.columns((1, 1))
+            with left:
+                st_plotly_chart(stacked_bar_mensual_plotly(_pm.set_index("Fecha"), _hipo_prop_noms, "Proporció mensual del nombre d'hipoteques per tipus de constitució (%)", "%"), use_container_width=True, responsive=True)
+            with right:
+                _fig = stacked_bar_plotly(_py, _hipo_prop_noms, "Proporció anual del nombre d'hipoteques per tipus de constitució (%)", "%", _ine_any_ini)
+                _fig.update_yaxes(range=[0, 100], tickformat=".0f")
+                st_plotly_chart(_fig, use_container_width=True, responsive=True)
 
     if selected_type=="Sector residencial":
         if selected_index=="Producció":
@@ -4707,7 +4888,7 @@ if selected == "Espanya":
                 st_plotly_chart(stacked_bar_plotly(table_esp_y[table_esp_y.notna()], table_esp.columns.tolist()[1:3], "Evolució anual de les compravendes d'habitatge per tipologia d'habitatge", "Nombre de compravendes", 2008), use_container_width=True, responsive=True)
         if selected_index=="Preus":
                 min_year=2008
-                st.subheader("VALOR TASAT MITJÀ D'HABITATGE LLIURE €/M\u00b2 (MITMA)")
+                st.subheader("VALOR TASAT MITJÀ D'HABITATGE LLIURE €/M\u00b2 (MIVAU)")
                 st.markdown(f'<div class="custom-box">ANY {selected_year_n}</div>', unsafe_allow_html=True)
                 table_esp = tidy_Catalunya(DT_terr, ["Fecha", "prvivlfom_Nacional", "prvivlnfom_Nacional"], f"{str(min_year)}-01-01", f"{str(max_year)}-12-31",["Data", "Preu de l'habitatge lliure", "Preu de l'habitatge lliure nou"])
                 table_esp_y = tidy_Catalunya_anual(DT_terr_y, ["Fecha", "prvivlfom_Nacional", "prvivlnfom_Nacional"], min_year, annual_upper_bound("prvivlfom_Nacional"),["Any", "Preu de l'habitatge lliure", "Preu de l'habitatge lliure nou"])
@@ -4775,6 +4956,9 @@ if selected == "Espanya":
                 with right_col:
                     st_plotly_chart(bar_plotly(table_esp_y, table_esp.columns.tolist(), "Índex anual de preus per tipologia d'habitatge (variació anual %)", "%", 2007), use_container_width=True, responsive=True)
 
+if selected == "Espanya":
+    mostra_font(FONTS_INDICADORS["Espanya"].get(selected_index))
+
 if selected == "Catalunya":
     left, center, right= st.columns((1,1,1))
     with left:
@@ -4783,7 +4967,7 @@ if selected == "Catalunya":
             selected_type = st.radio("**Mercat de venda o lloguer**", ("Venda", "Lloguer"), horizontal=True)
     with center:
         if (selected_indicator=="Indicadors econòmics"):
-            selected_index = st.selectbox("**Selecciona un indicador:**", ["Costos de construcció", "Mercat laboral", "Consum de Ciment", "Hipoteques"], key="catalunya_indicador_economic")
+            selected_index = st.selectbox("**Selecciona un indicador:**", ["Costos de construcció", "Mercat laboral", "Consum de Ciment", "Mercat hipotecari"], key="catalunya_indicador_economic")
         if ((selected_indicator=="Sector residencial")):
             selected_index = st.selectbox("**Selecciona un indicador:**", ["Producció", "Compravendes", "Preus", "Superfície"], key="catalunya_indicador_residencial")
         # if (selected_type=="Lloguer") and (selected_indicator=="Sector residencial"):
@@ -4802,7 +4986,7 @@ if selected == "Catalunya":
             "Costos de construcció": "Costos_edificimitjaneres",
             "Mercat laboral": "emptot_Catalunya",
             "Consum de Ciment": "cons_ciment_Catalunya",
-            "Hipoteques": "hipon_Catalunya",
+            "Mercat hipotecari": "hipon_Catalunya",
         }.get(selected_index, "iniviv_Catalunya")
         available_years, index_year = year_selector_options(_ref_col_catalunya, df_quarterly=DT_terr, df_monthly=DT_monthly, df_annual=DT_terr_y)
         selected_year_n = st.selectbox("**Selecciona un any:**", available_years, available_years.index(index_year), key="catalunya_any")
@@ -4899,7 +5083,7 @@ if selected == "Catalunya":
                 st_plotly_chart(line_plotly(table_catalunya_q, ["Consum de ciment"], "Consum de ciment (Milers T.)", "Milers de T."), use_container_width=True, responsive=True)
             with right:
                 st_plotly_chart(bar_plotly(table_catalunya_y.pct_change(1, fill_method=None).mul(100).dropna(axis=0), ["Consum de ciment"], "Variació anual del consum de ciment (Milers T.)", "%", 2012), use_container_width=True, responsive=True)
-        if selected_index=="Hipoteques":
+        if selected_index=="Mercat hipotecari":
             st.subheader("IMPORT I NOMBRE D'HIPOTEQUES INSCRITES EN ELS REGISTRES DE PROPIETAT")
             st.markdown(f'<div class="custom-box">ANY {selected_year_n}</div>', unsafe_allow_html=True)
             min_year=2008
@@ -5182,6 +5366,10 @@ if selected == "Catalunya":
             with right_col:
                 st_plotly_chart(bar_plotly(table_Catalunya_y, ["Rendes mitjanes de lloguer"], "Evolució anual de les rendes mitjanes de lloguer a Catalunya", "€/mes", 2005), use_container_width=True, responsive=True)   
                 st_plotly_chart(bar_plotly(table_Catalunya_y, ["Nombre de contractes de lloguer"], "Evolució anual dels contractes registrats d'habitatges en lloguer a Catalunya", "Nombre de contractes de lloguer", 2005), use_container_width=True, responsive=True)  
+if selected == "Catalunya":
+    mostra_font(FONTS_INDICADORS["Catalunya"].get(selected_index) if selected_indicator == "Indicadors econòmics"
+                else FONTS_INDICADORS["Territori"].get(selected_type))
+
 if selected == "Províncies i àmbits":
     prov_names = ["Barcelona", "Girona", "Tarragona", "Lleida"]
     ambit_names = ["Alt Pirineu i Aran","Camp de Tarragona","Comarques centrals","Comarques gironines","Metropolità","Penedès","Ponent","Terres de l'Ebre"]
@@ -5710,6 +5898,9 @@ if selected == "Províncies i àmbits":
                 st_plotly_chart(bar_plotly(table_province_y, ["Rendes mitjanes de lloguer"], "Evolució anual de les rendes mitjanes de lloguer", "€/mes", 2005), use_container_width=True, responsive=True)
                 st_plotly_chart(bar_plotly(table_province_y, ["Nombre de contractes de lloguer"], "Evolució anual dels contractes registrats d'habitatges en lloguer", "Nombre de contractes", 2005), use_container_width=True, responsive=True)
 
+if selected == "Províncies i àmbits":
+    mostra_font(FONTS_INDICADORS["Territori"].get(selected_type))
+
 if selected=="Comarques":
     left, center, right= st.columns((1,1,1))
     with left:
@@ -6023,6 +6214,9 @@ if selected=="Comarques":
         with right_col:
             st_plotly_chart(bar_plotly(table_province_y, ["Rendes mitjanes de lloguer"], "Evolució anual de les rendes mitjanes de lloguer", "€/mes", 2005), use_container_width=True, responsive=True)
             st_plotly_chart(bar_plotly(table_province_y, ["Nombre de contractes de lloguer"], "Evolució anual del nombre de contractes de lloguer", "Nombre de contractes", 2005), use_container_width=True, responsive=True)
+if selected == "Comarques":
+    mostra_font(FONTS_INDICADORS["Territori"].get(selected_type))
+
 if selected=="Municipis":
     left, center, right= st.columns((1,1,1))
     with left:
@@ -6277,10 +6471,12 @@ if selected=="Municipis":
                 st_plotly_chart(line_plotly(table_mun, table_mun.columns.tolist(), "Evolució trimestral dels preus per m\u00b2 construït per tipologia d'habitatge", "€/m\u00b2 útil", "Trimestre", True), use_container_width=True, responsive=True)
             with right_col:
                 st_plotly_chart(bar_plotly(table_mun_y, table_mun.columns.tolist(), "Evolució anual dels preus per m\u00b2 construït per tipologia d'habitatge", "€/m\u00b2 útil", 2005), use_container_width=True, responsive=True)
+            mostra_font(_FONT_AGENCIA)
             try:
                 tabla_estudi_oferta = table_mun_oferta(selected_mun, LAST_CLOSED_YEAR, CURRENT_YEAR_LIMIT)
                 st.subheader("Estudi d'Oferta de Nova Construcció (APCE). Municipi de " + selected_mun.split(',')[0].strip())
                 st.markdown(tabla_estudi_oferta.to_html(), unsafe_allow_html=True)
+                mostra_font(_FONT_OFERTA)
                 st.markdown(
                     """
                     <div style="text-align: center; margin-top: 10px; margin-bottom: 10px;">
@@ -6515,6 +6711,11 @@ if selected=="Municipis":
                 st.info(f"No hi ha ficha de demanda potencial per a {selected_mun} (sense dada real de compravendes d'obra nova).")
         except Exception:
             st.info("La ficha de demanda potencial no està disponible ara mateix.")
+if selected == "Municipis":
+    # Venda > Preus ja porta les seves dues línies (preus i taula d'oferta) enmig de la pantalla.
+    if not (selected_type == "Venda" and selected_index == "Preus"):
+        mostra_font(FONTS_INDICADORS["Municipis"].get(selected_type) or FONTS_INDICADORS["Territori"].get(selected_type))
+
 if selected=="Districtes de Barcelona":
     left, center, right= st.columns((1,1,1))
     with left:
@@ -6833,6 +7034,9 @@ if selected=="Districtes de Barcelona":
             st_metric("Superfície mitjana dels habitatges", value=f"""{round(censo_2021_dis[censo_2021_dis["Distrito"]==selected_dis]["Superficie Media"].values[0],1)}""")
             st_plotly_chart(donut_plotly_demografia(subset_tamaño_dis_aux,["Tamany", "Llars"], "Distribució del nombre de membres per llar", "Llars"), use_container_width=True, responsive=True)
 
+if selected == "Districtes de Barcelona":
+    mostra_font(FONTS_INDICADORS["Districtes"].get(selected_type) or FONTS_INDICADORS["Territori"].get(selected_type))
+
 if selected=="Mapa interactiu":
     st.subheader("MAPA INTERACTIU D'INDICADORS MUNICIPALS")
     opcions = {
@@ -6863,6 +7067,7 @@ if selected=="Mapa interactiu":
         returned_objects=[],
         key=f"mapa_municipis_{var_prefix}_{any_mapa}",
     )
+    mostra_font(FONTS_INDICADORS["Mapa"].get(label, FONTS_INDICADORS["Territori"]["Venda"]))
 
 if selected == "Informe de Mercat i Sectorial":
     st.subheader("INFORME DE MERCAT PER MUNICIPI")
@@ -7858,9 +8063,22 @@ def oferta_text_resum_mun_dis(df_hab, geo, columna_geo, any_estudi):
     """
 
 
-def oferta_filedownload(df, filename):
+def oferta_filedownload(df, filename, format_columns=None):
+    """format_columns: {etiqueta_columna: format_excel}, opcional. Per defecte totes
+    les columnes numèriques porten "#,##0" (comportament d'abans, sense canvis per a
+    Municipis/Districtes). Serveix per a columnes com la variació anual de promocions,
+    que ha de portar un decimal i no arrodonir-se a l'enter."""
     from openpyxl.styles import Font, PatternFill, Alignment, Border
     from openpyxl.utils import get_column_letter
+
+    format_columns = format_columns or {}
+    _cols_amb_format = {}
+    for etiqueta, fmt in format_columns.items():
+        try:
+            posicio = list(df.columns).index(etiqueta)
+        except ValueError:
+            continue
+        _cols_amb_format[posicio + 2] = fmt  # +1 índex (columna A) + 1 base-1 d'Excel
 
     header_rows = getattr(df.columns, "nlevels", 1)
     sheet_name = re.sub(r'[\\/*?:\[\]]', "_", filename.rsplit(".", 1)[0])[:31] or "Dades"
@@ -7891,7 +8109,7 @@ def oferta_filedownload(df, filename):
             for col_idx in range(2, ws.max_column + 1):
                 cell = ws.cell(row_idx, col_idx)
                 if isinstance(cell.value, (int, float)):
-                    cell.number_format = "#,##0"
+                    cell.number_format = _cols_amb_format.get(col_idx, "#,##0")
                 cell.fill = ZEBRA_FILL if (row_idx - data_start) % 2 == 1 else WHITE_FILL
         for row in ws.iter_rows(min_row=1, max_row=ws.max_row):
             for cell in row:
@@ -7906,6 +8124,177 @@ def oferta_filedownload(df, filename):
     b64 = base64.b64encode(towrite.read()).decode("latin-1")
     return f'''<a href="data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,{b64}" download="{filename}">
     <button class="download-button">Descarregar</button></a>'''
+
+
+# ========== NOMBRE DE PROMOCIONS (font independent) ==========
+# Vegeu _revisio_calculs/PROPOSTA_NUM_PROMOCIONS.md. Font i unitat diferents de la resta
+# de l'Estudi d'Oferta: cada fila de BBDD_Promociones.json és una PROMOCIÓ dins d'una
+# edició (clau period_id + development_id), no un habitatge. No hi ha clau verificada
+# per enllaçar-la amb BBDD_Atlas_trimmed.json (habitatges), així que les dues fonts
+# s'agreguen per separat i només es combinen DESPRÉS d'agregar -- mai amb un merge en cru
+# que multiplicaria files i desquadraria recomptes, preus i mitjanes d'habitatges.
+
+OFERTA_PROMOCIONS_CAMPS_NECESSARIS = [
+    "period_id", "development_id", "province", "cod_amb", "nom_amb",
+    "municipality_id", "municipality",
+]
+
+
+def _oferta_promocions_signatura():
+    """Ruta, mtime i mida del JSON de promocions com a arguments explícits (en lloc
+    d'un `_ruta` amb prefix "_"), perquè @st.cache_data invalidi la cache quan el
+    contingut del fitxer canviï -- no només quan canviï el nom."""
+    path = Path(DATA_FILE_ATLAS_PROMOCIONS)
+    if not path.exists():
+        return None
+    info = path.stat()
+    return (str(path), info.st_mtime_ns, info.st_size)
+
+
+def _oferta_promocions_netejar_text(serie):
+    """Buit, "None", "nan" i "<NA>" com a NA real -- mai com a text literal a la taula."""
+    return (serie.astype("string").str.strip()
+                 .replace({"": pd.NA, "None": pd.NA, "nan": pd.NA, "<NA>": pd.NA}))
+
+
+@st.cache_data(show_spinner=False)
+def oferta_carregar_promocions(ruta, mtime_ns, mida):
+    """Carrega i valida BBDD_Promociones.json. Retorna (df, None) si la font és
+    utilitzable o (None, "motiu") si no ho és -- mai un DataFrame buit disfressat
+    d'un recompte real de zero promocions."""
+    try:
+        registres = json.loads(Path(ruta).read_text(encoding="utf-8-sig"))
+    except Exception as e:
+        return None, f"No s'ha pogut llegir {ruta}: {e}"
+    if not isinstance(registres, list) or not registres:
+        return None, f"{ruta} no és una llista de registres."
+
+    df = pd.DataFrame.from_records(registres)
+    faltants = [c for c in OFERTA_PROMOCIONS_CAMPS_NECESSARIS if c not in df.columns]
+    if faltants:
+        return None, "Falten columnes a la font de promocions: " + ", ".join(faltants)
+
+    for camp in OFERTA_PROMOCIONS_CAMPS_NECESSARIS:
+        df[camp] = _oferta_promocions_netejar_text(df[camp])
+
+    # Format explícit "AAAA_H1"/"AAAA_H2" i només els períodes admesos (ATLAS_PERIODES,
+    # la mateixa llista que ja fa servir la font d'habitatges). Un period_id amb un altre
+    # format o no admès es descarta aquí -- mai s'assigna per defecte a l'any en curs.
+    format_ok = df["period_id"].astype("string").str.match(r"^\d{4}_H[12]$", na=False)
+    df = df[format_ok & df["period_id"].isin(ATLAS_PERIODES)].copy()
+    if df.empty:
+        return None, "Cap fila de promocions amb un period_id admès."
+
+    obligatoris = ["period_id", "development_id", "province", "cod_amb", "nom_amb"]
+    buits = df[obligatoris].isna().any(axis=1)
+    if buits.any():
+        return None, f"{int(buits.sum())} files de promocions amb camps obligatoris buits."
+
+    claus = list(zip(df["period_id"], df["development_id"]))
+    if len(claus) != len(set(claus)):
+        return None, "development_id duplicat dins d'un mateix period_id."
+
+    # Un cod_amb ha de portar sempre el mateix nom_amb -- si no, agregar per nom no
+    # tindria garanties.
+    incoherent = df.groupby("cod_amb")["nom_amb"].nunique()
+    if (incoherent > 1).any():
+        noms = ", ".join(incoherent[incoherent > 1].index.astype(str))
+        return None, f"cod_amb amb més d'un nom_amb: {noms}"
+
+    df["Any"] = df["period_id"].str[:4].astype(int)
+    df["Semestre"] = df["period_id"].str[5:]
+    return df, None
+
+
+def oferta_promocions_disponibles():
+    """Punt d'entrada per a la resta de l'app: (df, None) si tot bé, (None, "motiu")
+    si la font de promocions no es pot fer servir. La resta de l'Estudi d'Oferta
+    (habitatges) ha de seguir funcionant igualment si això falla."""
+    signatura = _oferta_promocions_signatura()
+    if signatura is None:
+        return None, f"No es troba {DATA_FILE_ATLAS_PROMOCIONS}."
+    return oferta_carregar_promocions(*signatura)
+
+
+@st.cache_data(show_spinner=False)
+def oferta_construir_df_promocions(df):
+    """Agregat pur de promocions: period_id, Any, Semestre, Nivell, GEO,
+    Nombre_promocions, Variacio_anual_pct. Només Catalunya, províncies i àmbits
+    territorials -- sense desglossament municipal ni per tipologia (decisió tancada,
+    vegeu el .md): una promoció pot barrejar unifamiliar i plurifamiliar."""
+    files = []
+    nivells = [
+        ("Catalunya", lambda d: pd.Series("Catalunya", index=d.index)),
+        ("Províncies", lambda d: d["province"]),
+        ("Àmbits territorials", lambda d: d["nom_amb"]),
+    ]
+    for period_id, d_periode in df.groupby("period_id"):
+        any_ = int(d_periode["Any"].iloc[0])
+        semestre = d_periode["Semestre"].iloc[0]
+        for nom_nivell, func_geo in nivells:
+            for geo, grup in d_periode.groupby(func_geo(d_periode)):
+                files.append({
+                    "period_id": period_id, "Any": any_, "Semestre": semestre,
+                    "Nivell": nom_nivell, "GEO": geo,
+                    "Nombre_promocions": int(grup["development_id"].nunique()),
+                })
+    resultat = pd.DataFrame(files)
+
+    # Variació contra el MATEIX semestre de l'any anterior, buscat explícitament per
+    # clau (Nivell, GEO, Semestre, Any-1) -- mai la fila anterior sense comprovar la
+    # distància temporal, ni sumar semestres.
+    previ = resultat.rename(columns={"Nombre_promocions": "_previ"})[
+        ["Nivell", "GEO", "Semestre", "Any", "_previ"]
+    ].copy()
+    previ["Any"] = previ["Any"] + 1
+    resultat = resultat.merge(previ, on=["Nivell", "GEO", "Semestre", "Any"], how="left")
+    actual = resultat["Nombre_promocions"].astype(float)
+    previ_val = resultat["_previ"]
+    resultat["Variacio_anual_pct"] = np.where(
+        previ_val.notna() & (previ_val > 0), 100 * (actual / previ_val - 1), np.nan
+    )
+    return resultat.drop(columns=["_previ"])
+
+
+def oferta_integrar_promocions(taula_habitatges, df_promocions, nivell, geo, periodes_visibles):
+    """Afegeix el bloc PROMOCIONS (nombre + variació anual) davant de les columnes
+    d'habitatges de `taula_habitatges` (sortida de oferta_taula_comparativa), sense
+    mutar-la. No fa cap `merge` en cru amb habitatges: `df_promocions` ja ve agregat
+    per Nivell/GEO/Any (oferta_construir_df_promocions) i aquí només es filtra,
+    s'alinea per Any -- mai per posició -- i es concatena."""
+    geo_valor = "Catalunya" if geo is None else geo
+    sub = df_promocions[
+        (df_promocions["Nivell"] == nivell)
+        & (df_promocions["GEO"] == geo_valor)
+        & (df_promocions["Any"].isin(periodes_visibles))
+    ]
+    claus = list(zip(sub["Nivell"], sub["GEO"], sub["Any"]))
+    if len(claus) != len(set(claus)):
+        raise ValueError(f"Clau Nivell/GEO/Any duplicada a promocions per a {nivell}/{geo_valor}.")
+
+    nombre = sub.set_index("Any")["Nombre_promocions"].reindex(taula_habitatges.index)
+    variacio = sub.set_index("Any")["Variacio_anual_pct"].reindex(taula_habitatges.index)
+
+    bloc = pd.DataFrame({
+        ("PROMOCIONS", "Nombre de promocions"): nombre,
+        ("PROMOCIONS", "Variació anual (%)"): variacio,
+    }, index=taula_habitatges.index)
+    bloc.columns = pd.MultiIndex.from_tuples(bloc.columns)
+    return pd.concat([bloc, taula_habitatges], axis=1)
+
+
+def oferta_taula_html_promocions(df):
+    """Com taula_html_es(df, precision=0) però amb un decimal a la columna de
+    variació de promocions -- amb precision=0 es perdria (p. ex. -4,7966...% es
+    veuria com -5%). La resta de columnes (habitatges i el recompte de promocions)
+    conserva el mateix format que ja tenien."""
+    col_variacio = ("PROMOCIONS", "Variació anual (%)")
+    formatters = {c: "{:,.0f}" for c in df.columns if c != col_variacio}
+    if col_variacio in df.columns:
+        formatters[col_variacio] = "{:,.1f}"
+    return (df.style
+              .format(formatters, thousands=".", decimal=",", na_rep="—")
+              .to_html())
 
 
 @st.cache_data(show_spinner=False)
@@ -8456,6 +8845,28 @@ if selected == "Estudi d'Oferta Obra Nova":
     oferta_dades_2026 = oferta_crear_bases_any(oferta_dades_totals, 2026)
     oferta_df_final = oferta_construir_df_final(oferta_dades_totals)
 
+    # Nombre de promocions: font independent (BBDD_Promociones.json), es carrega i
+    # s'agrega un sol cop per rerun. Si falla, les taules d'habitatges han de seguir
+    # funcionant igual -- vegeu oferta_integrar_promocions i _oferta_amb_promocions.
+    oferta_promocions_df, oferta_promocions_error = oferta_promocions_disponibles()
+    oferta_promocions_agg = (
+        oferta_construir_df_promocions(oferta_promocions_df)
+        if oferta_promocions_df is not None else None
+    )
+
+    def _oferta_amb_promocions(taula_hab, nivell, geo, periodes_visibles):
+        """taula_hab amb el bloc PROMOCIONS afegit si la font està disponible; si no,
+        taula_hab tal qual amb un avís discret. Un problema amb promocions mai amaga
+        ni trenca la taula d'habitatges (decisió tancada del pla)."""
+        if oferta_promocions_agg is None:
+            st.caption(f"Nombre de promocions no disponible: {oferta_promocions_error}")
+            return taula_hab
+        try:
+            return oferta_integrar_promocions(taula_hab, oferta_promocions_agg, nivell, geo, periodes_visibles)
+        except Exception as e:
+            st.caption(f"Nombre de promocions no disponible: {e}")
+            return taula_hab
+
     st.subheader("ESTUDI D'OFERTA OBRA NOVA")
     st.markdown('<div class="oferta-menu-anchor"></div>', unsafe_allow_html=True)
     oferta_selected = st.radio("Secció", OFERTA_PAGINES, horizontal=True, label_visibility="collapsed", key="oferta_menu")
@@ -8527,14 +8938,22 @@ if selected == "Estudi d'Oferta Obra Nova":
         oferta_titol_seccio("Comparativa 2025–2026")
         if selected_edition == "2025":
             st.warning("Les dades només estan disponibles des de 2025 en aquesta app. No es pot calcular la comparativa amb 2024.")
-            st.markdown(taula_html_es(oferta_taula_comparativa(oferta_df_final, "Catalunya", None, 2025, 2025), precision=0), unsafe_allow_html=True)
+            taula_cat_2025 = _oferta_amb_promocions(
+                oferta_taula_comparativa(oferta_df_final, "Catalunya", None, 2025, 2025), "Catalunya", None, [2025]
+            )
+            st.markdown(oferta_taula_html_promocions(taula_cat_2025), unsafe_allow_html=True)
         else:
             st.write("<p>La comparativa es calcula a partir de les dades deduplicades dels dos semestres analitzats (2025 i 2026). La lectura s'ha de fer com una comparació entre semestres equivalents.</p>", unsafe_allow_html=True)
             oferta_mostra_text_informe("territori", selected_edition)
             oferta_mostra("Variació anual dels principals indicadors per tipologia d'habitatge (%)", oferta_grafic_variacio_anual(oferta_dades_2026, oferta_dades_2025))
-            taula_cat = oferta_taula_comparativa(oferta_df_final, "Catalunya", None, 2025, 2026)
-            st.markdown(taula_html_es(taula_cat, precision=0), unsafe_allow_html=True)
-            st.markdown(oferta_filedownload(taula_cat, "Estudi_oferta_Catalunya_APCE_2025_2026.xlsx"), unsafe_allow_html=True)
+            taula_cat = _oferta_amb_promocions(
+                oferta_taula_comparativa(oferta_df_final, "Catalunya", None, 2025, 2026), "Catalunya", None, [2025, 2026]
+            )
+            st.markdown(oferta_taula_html_promocions(taula_cat), unsafe_allow_html=True)
+            st.markdown(oferta_filedownload(
+                taula_cat, "Estudi_oferta_Catalunya_APCE_2025_2026.xlsx",
+                format_columns={("PROMOCIONS", "Variació anual (%)"): "0.0"},
+            ), unsafe_allow_html=True)
 
     if oferta_selected == "Províncies i àmbits":
         left, center, right = st.columns((1, 1, 1))
@@ -8561,9 +8980,16 @@ if selected == "Estudi d'Oferta Obra Nova":
             oferta_mostra_text_informe("ambits", selected_edition)
         st.markdown(oferta_text_resum_geo(dades, selected_geo, columna_geo, selected_edition))
         nivell_geo = "Àmbits territorials" if selected_option == "Àmbits territorials" else "Províncies"
-        taula_geo = oferta_taula_comparativa(oferta_df_final, nivell_geo, selected_geo, 2025, int(selected_edition))
-        st.markdown(taula_html_es(taula_geo, precision=0), unsafe_allow_html=True)
-        st.markdown(oferta_filedownload(taula_geo, f"Estudi_oferta_APCE_{selected_geo}.xlsx"), unsafe_allow_html=True)
+        _periodes_geo = [2025] if int(selected_edition) == 2025 else [2025, 2026]
+        taula_geo = _oferta_amb_promocions(
+            oferta_taula_comparativa(oferta_df_final, nivell_geo, selected_geo, 2025, int(selected_edition)),
+            nivell_geo, selected_geo, _periodes_geo,
+        )
+        st.markdown(oferta_taula_html_promocions(taula_geo), unsafe_allow_html=True)
+        st.markdown(oferta_filedownload(
+            taula_geo, f"Estudi_oferta_APCE_{selected_geo}.xlsx",
+            format_columns={("PROMOCIONS", "Variació anual (%)"): "0.0"},
+        ), unsafe_allow_html=True)
 
         df_geo = oferta_filtra_geo(dades, columna_geo, selected_geo)
         fila_1_left, fila_1_right = st.columns((1, 1))
@@ -8767,6 +9193,8 @@ if selected == "Estudi d'Oferta Obra Nova":
                 st_folium(oferta_mapa_punts_habitatges(punts), use_container_width=True, height=MAPA_ALCADA, returned_objects=[])
             else:
                 st.info("No hi ha coordenades disponibles.")
+
+    mostra_font(FONTS_INDICADORS["Estudi d'Oferta"])
 
 ############################################################  BOTÓ "TORNAR A DALT" (sempre visible) ################################################
 # Enllaç fix a baix a la dreta que porta a l'àncora #dalt del principi (desplaçament suau).
