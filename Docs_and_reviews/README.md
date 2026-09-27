@@ -24,8 +24,10 @@ Abrir Python por otra vía sin esa opción puede regenerar la carpeta original.
 2. [Guía vigente de promociones](_revisio_calculs/PROPOSTA_NUM_PROMOCIONS_VIGENT.md):
    criterio actual, ubicaciones, cálculo y pruebas. El plan sin sufijo se conserva como histórico.
 3. [Diagnóstico del mapa de viviendas](_revisio_calculs/DIAGNOSTICO_MAPA_VIVIENDAS.md).
-4. [Optimización de los mapas, fase 1](_revisio_calculs/OPTIMIZACION_MAPAS_FASE1.md):
-   rendimiento de los mapas folium, cambios aplicados, verificación y fases pendientes.
+4. Optimización de los mapas folium:
+   [fase 1](_revisio_calculs/OPTIMIZACION_MAPAS_FASE1.md) (diagnóstico, mapas más ligeros) y
+   [fase 2](_revisio_calculs/OPTIMIZACION_MAPAS_FASE2.md) (mapas cacheados, `st.fragment`, y zoom
+   y agrupación del mapa de viviendas).
 5. Otros planes y diagnósticos del mismo directorio, según el encargo.
 
 La antigua propuesta de orden de carpetas se conserva como antecedente y lleva una
