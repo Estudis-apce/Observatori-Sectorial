@@ -7,6 +7,7 @@ from typing import List, Tuple, Optional, Iterable
 import base64
 import io
 import json
+import math
 import sys
 import traceback
 import os
@@ -29,12 +30,14 @@ import plotly.graph_objects as go
 import numpy_financial as npf
 
 import geopandas as gpd
+import shapely
 
 import streamlit as st
 import streamlit.components.v1 as components
 import folium
 from folium.plugins import FastMarkerCluster
-from streamlit_folium import st_folium
+from branca.colormap import StepColormap
+from branca.utilities import color_brewer
 
 
 # ---------------------------
@@ -291,13 +294,16 @@ VIAB_MIN_UNITATS_OFERTA = 5  # mínim d'habitatges nous en oferta (Atlas) per co
 TILES_CLAR = "https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}"
 TILES_FOSC = "https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}"
 TILES_ATRIBUCIO = "Esri, HERE, Garmin, © OpenStreetMap contributors"
+# Últim zoom amb tesel·les reals d'aquests dos mapes base: des del 17 el servidor d'Esri
+# retorna sempre la mateixa imatge grisa "Map data not yet available" (comprovat
+# 2026-09-23). Amb max_native_zoom, als zooms 17-18 Leaflet amplia la tesel·la del 16 en
+# comptes de pintar el quadre gris; cal poder arribar al 18 per separar els habitatges.
+TILES_ZOOM_NATIU_MAX = 16
 
-# Alçada única de tots els mapes folium. streamlit-folium 0.22 calcula malament
-# l'alçada de l'iframe amb use_container_width=True (mesurat: iframes de 2.200-3.100 px
-# per a mapes de 700 px, deixant un forat buit enorme sota cada mapa). Com que el
-# component no és fiable, l'alçada es fixa també per CSS a main.css
-# (`iframe[title="streamlit_folium.st_folium"]`), i per això ha de ser la mateixa
-# a tots els mapes: si es canvia aquí, cal canviar-la també allà.
+# Alçada única de tots els mapes folium, en px: és l'alçada de l'iframe de
+# components.html on es mostren (vegeu mostra_mapa_folium), i el mapa l'omple sencer.
+# Abans es mostraven amb streamlit-folium 0.22, que calculava malament aquesta alçada
+# (iframes de 2.200-3.100 px per a mapes de 700 px) i calia forçar-la per CSS.
 MAPA_ALCADA = 720
 
 # ========== RUTES / FITXERS EXTERNS ==========
@@ -4073,11 +4079,18 @@ def table_year(data_ori, year_ini, rounded=False, formated=True):
 
 @st.cache_resource(show_spinner=False)
 def load_shp(p):
-    s=gpd.read_file(p); 
+    s=gpd.read_file(p);
     s["nom_muni"]=s["nom_muni"].astype(str)
     s["codiine"] = s["codiine"].astype(int)
     s["geometry"]=s.geometry.simplify(8e-4, preserve_topology=True)
-    return s
+    # Única càrrega del shapefile per a tota l'app: abans l'Estudi d'Oferta el tornava a
+    # llegir i simplificar pel seu compte (~7 s més a cada arrencada i una segona còpia en
+    # memòria). "municipi" és la clau que fa servir l'Estudi d'Oferta (el codi INE de 5
+    # xifres, no el "municipi" de 6 xifres que porta el fitxer). La resta de columnes del
+    # fitxer (codi_costa, codi_cadas...) no les fa servir ningú i viatjaven al navegador
+    # dins del GeoJSON de cada mapa.
+    s["municipi"] = s["codiine"]
+    return s[["codiine", "municipi", "nom_muni", "geometry"]]
 load_shp = auto_spinner(load_shp)
 shapefile_mun = load_shp(SHAPEFILE_MUN)
 
@@ -4171,8 +4184,68 @@ def _talls_quantils(serie):
     return talls
 
 
-def folium_mapa_municipis(map_df, any, name_var):
-    dark_mode = st.session_state.get("theme", "light") == "dark"
+def _geojson_mapa(gdf, columnes):
+    """GeoJSON que s'envia a un mapa folium: només les columnes que el mapa mostra o
+    necessita per pintar, i les coordenades arrodonides a 4 decimals (~10 m, de sobres a
+    l'escala d'un mapa de Catalunya; amb els ~15 decimals originals el GeoJSON pesava el
+    doble). L'arrodoniment es fa aquí i no a shapefile_mun perquè _municipis_mes_propers
+    calcula distàncies amb la geometria original."""
+    capa = gdf[columnes + ["geometry"]].copy()
+    capa["geometry"] = gpd.GeoSeries(
+        shapely.transform(capa.geometry.array, lambda c: np.round(c, 4)), index=capa.index, crs=capa.crs,
+    )
+    return capa.to_geo_dict()
+
+
+def _capa_mapa_municipis(_map_df, var_prefix, any, name_var):
+    """Capa del mapa de municipis: GeoJSON lleuger (vegeu _geojson_mapa) amb el color de cada
+    municipi ja resolt. No es cacheja per separat: només la fa servir html_mapa_municipis,
+    que ja guarda el mapa sencer.
+
+    Abans el mapa portava dues capes amb el GeoJSON sencer (un folium.Choropleth per als
+    colors i un folium.GeoJson a sobre per al tooltip): ~5 MB de HTML i ~1 s de CPU a cada
+    clic. Ara és una sola capa amb el color de cada municipi ja resolt aquí, reproduint
+    exactament folium.Choropleth(fill_color="YlOrRd"): mateixos talls (np.histogram sobre
+    els de _talls_quantils, o 6 trams iguals), mateixa paleta i mateix criteri
+    d'assignació (np.digitize amb l'últim tall inclusiu)."""
+    valors = pd.to_numeric(_map_df["valor"], errors="coerce")
+    _, talls = np.histogram(valors.dropna().to_numpy(), bins=_talls_quantils(valors) or 6)
+    paleta = color_brewer("YlOrRd", n=len(talls) - 1)
+    talls_digitize = talls.astype(float)
+    talls_digitize[-1] = np.nextafter(talls_digitize[-1], np.inf)
+    idx = np.clip(np.digitize(valors.fillna(talls[0]).to_numpy(), talls_digitize) - 1, 0, len(paleta) - 1)
+    capa = _map_df[["nom_muni", "valor_fmt", "geometry"]].copy()
+    capa["color"] = np.where(valors.isna(), "#d9d9d9", np.array(paleta)[idx])
+    capa["opacitat"] = np.where(valors.isna(), 0.25, 0.78)
+    return {
+        "geojson": _geojson_mapa(capa, ["nom_muni", "valor_fmt", "color", "opacitat"]),
+        "paleta": paleta,
+        "talls": talls.tolist(),
+    }
+
+
+def mostra_mapa_folium(html):
+    """Mostra un mapa folium ja renderitzat a HTML (el que retornen les funcions html_mapa_*,
+    cachejades). Substitueix st_folium, que tornava a renderitzar el mapa sencer a cada
+    crida -- i el modificava, de manera que ni l'objecte folium ni el HTML es podien
+    cachejar -- per oferir una interacció de tornada cap a Python (clics, zoom...) que
+    l'app no fa servir: tots els mapes es cridaven amb returned_objects=[].
+    L'àncora permet que main.css estilitzi NOMÉS aquests iframes, i no els altres
+    components.html de la pàgina."""
+    st.markdown('<div class="mapa-folium-anchor"></div>', unsafe_allow_html=True)
+    components.html(html, height=MAPA_ALCADA)
+
+
+@st.cache_data(show_spinner=False, max_entries=64)
+def html_mapa_municipis(_map_df, var_prefix, any, name_var, dark_mode):
+    """El mapa de municipis ja renderitzat, un sol cop per indicador, any i tema, i compartit
+    entre sessions: el segon usuari que el demana el rep sense cap càlcul. Mateix criteri de
+    clau que tmp_map, d'on surt _map_df."""
+    capa = _capa_mapa_municipis(_map_df, var_prefix, any, name_var)
+    return folium_mapa_municipis(capa, any, name_var, dark_mode).get_root().render()
+
+
+def folium_mapa_municipis(capa, any, name_var, dark_mode):
     m = folium.Map(
         location=[41.75, 1.65],
         zoom_start=8,
@@ -4180,38 +4253,36 @@ def folium_mapa_municipis(map_df, any, name_var):
         control_scale=True,
         prefer_canvas=True,
     )
-    folium.TileLayer(TILES_CLAR, attr=TILES_ATRIBUCIO, name="Clar", control=True, show=not dark_mode).add_to(m)
-    folium.TileLayer(TILES_FOSC, attr=TILES_ATRIBUCIO, name="Fosc", control=True, show=dark_mode).add_to(m)
+    folium.TileLayer(TILES_CLAR, attr=TILES_ATRIBUCIO, name="Clar", control=True, show=not dark_mode, max_native_zoom=TILES_ZOOM_NATIU_MAX).add_to(m)
+    folium.TileLayer(TILES_FOSC, attr=TILES_ATRIBUCIO, name="Fosc", control=True, show=dark_mode, max_native_zoom=TILES_ZOOM_NATIU_MAX).add_to(m)
 
-    folium.Choropleth(
-        geo_data=map_df.__geo_interface__,
-        data=map_df,
-        columns=["codiine", "valor"],
-        key_on="feature.properties.codiine",
+    # Una sola capa per als colors i el tooltip (vegeu _capa_mapa_municipis). El contorn és
+    # el que es veia abans, el de la capa superior del tooltip.
+    folium.GeoJson(
+        capa["geojson"],
         # Sense name, folium bateja la capa amb el seu id intern i al control de
         # capes del mapa hi sortia literalment "macro_element_div_2".
         name=name_var,
-        fill_color="YlOrRd",
-        bins=_talls_quantils(map_df["valor"]) or 6,
-        fill_opacity=0.78,
-        line_opacity=0.25,
-        line_weight=0.4,
-        legend_name=f"{name_var} {any}",
-        nan_fill_color="#d9d9d9",
-        nan_fill_opacity=0.25,
-    ).add_to(m)
-
-    folium.GeoJson(
-        map_df.__geo_interface__,
-        name="Municipis",
         tooltip=folium.GeoJsonTooltip(
             fields=["nom_muni", "valor_fmt"],
             aliases=["Municipi:", "Valor:"],
             localize=True,
             sticky=False,
         ),
-        style_function=lambda x: {"fillOpacity": 0, "weight": 0.35, "color": "#444444"},
-        highlight_function=lambda x: {"weight": 2, "color": "#C1571E", "fillOpacity": 0.18},
+        style_function=lambda x: {
+            "fillColor": x["properties"]["color"],
+            "fillOpacity": x["properties"]["opacitat"],
+            "weight": 0.35,
+            "color": "#444444",
+        },
+        highlight_function=lambda x: {"weight": 2, "color": "#C1571E"},
+    ).add_to(m)
+    StepColormap(
+        capa["paleta"],
+        index=capa["talls"],
+        vmin=min(capa["talls"]),
+        vmax=max(capa["talls"]),
+        caption=f"{name_var} {any}",
     ).add_to(m)
     # collapsed=True: desplegat, el quadre de capes queia just damunt de la barra de
     # color de la llegenda i tapava els valors. Plegat queda com una icona discreta.
@@ -7037,8 +7108,10 @@ if selected=="Districtes de Barcelona":
 if selected == "Districtes de Barcelona":
     mostra_font(FONTS_INDICADORS["Districtes"].get(selected_type) or FONTS_INDICADORS["Territori"].get(selected_type))
 
-if selected=="Mapa interactiu":
-    st.subheader("MAPA INTERACTIU D'INDICADORS MUNICIPALS")
+# st.fragment: canviar l'indicador o l'any només torna a executar aquesta funció, i no
+# les ~9.000 línies de l'script sencer com qualsevol altre clic de Streamlit.
+@st.fragment
+def seccio_mapa_interactiu():
     opcions = {
         "Habitatges iniciats": "iniviv_",
         "Habitatges acabats": "finviv_",
@@ -7060,14 +7133,12 @@ if selected=="Mapa interactiu":
 
     var_prefix = opcions[label]
     map_df = tmp_map(DT_mun_y_all, shapefile_mun, maestro_mun, var_prefix, any_mapa, name_var_prefix=label)
-    st_folium(
-        folium_mapa_municipis(map_df, any_mapa, label),
-        use_container_width=True,
-        height=MAPA_ALCADA,
-        returned_objects=[],
-        key=f"mapa_municipis_{var_prefix}_{any_mapa}",
-    )
+    mostra_mapa_folium(html_mapa_municipis(map_df, var_prefix, any_mapa, label, st.session_state.get("theme") == "dark"))
     mostra_font(FONTS_INDICADORS["Mapa"].get(label, FONTS_INDICADORS["Territori"]["Venda"]))
+
+if selected=="Mapa interactiu":
+    st.subheader("MAPA INTERACTIU D'INDICADORS MUNICIPALS")
+    seccio_mapa_interactiu()
 
 if selected == "Informe de Mercat i Sectorial":
     st.subheader("INFORME DE MERCAT PER MUNICIPI")
@@ -8608,19 +8679,6 @@ def oferta_grafic_evolucio(df_final, nivell, geo, variable, any_ini, any_fin):
     return oferta_preparar_fig(fig)
 
 
-@st.cache_resource(show_spinner="Carregant el mapa...")
-def oferta_load_shp(p, tol=8e-4):
-    shp = gpd.read_file(p)
-    if "codiine" in shp.columns:
-        shp["municipi"] = shp["codiine"].astype(int)
-    elif "municipi" in shp.columns:
-        shp["municipi"] = shp["municipi"].astype(int)
-    else:
-        return None
-    shp["geometry"] = shp.geometry.simplify(tol, preserve_topology=True)
-    return shp
-
-
 def oferta_etiqueta_metrica_mapa(variable, unitats):
     if variable == "Unitats":
         return "Habitatges en oferta"
@@ -8641,8 +8699,19 @@ def oferta_prep_map_df(df_final, any_estudi, tipologia, variable):
     return df
 
 
-@st.cache_resource(show_spinner=False)
-def oferta_build_tmp(_shp, df_map):
+@st.cache_data(show_spinner=False, max_entries=64)
+def oferta_html_mapa_municipis(_shp, df_map, title, dark_mode):
+    """El mapa de municipis de l'Estudi d'Oferta ja renderitzat (vegeu mostra_mapa_folium),
+    un sol cop per combinació d'indicador, any i tipologia (df_map) i tema, i compartit
+    entre sessions."""
+    return oferta_folium_map(oferta_capa_mapa_municipis(_shp, df_map), title, dark_mode).get_root().render()
+
+
+def oferta_capa_mapa_municipis(_shp, df_map):
+    """Capa del mapa de municipis de l'Estudi d'Oferta: GeoJSON reduït a les columnes que es
+    mostren (vegeu _geojson_mapa) i el color de cada municipi ja resolt. Abans el color es
+    calculava a cada clic, municipi a municipi, dins del style_function de folium. No es
+    cacheja per separat: només la fa servir oferta_html_mapa_municipis."""
     shp = _shp.copy()
     if "nom_muni" in shp.columns:
         shp = shp.rename(columns={"nom_muni": "nom_muni_shp"})
@@ -8651,7 +8720,16 @@ def oferta_build_tmp(_shp, df_map):
         tmp["nom_muni"] = tmp["nom_muni"].fillna(tmp["nom_muni_shp"])
     tmp["valor_txt"] = tmp.get("valor_txt", pd.Series(index=tmp.index, dtype="string")).fillna("")
     tmp["metrica"] = tmp.get("metrica", pd.Series(index=tmp.index, dtype="string")).fillna("")
-    return tmp
+    vals = tmp["valor"].dropna()
+    minim = float(vals.min()) if not vals.empty else 0.0
+    maxim = float(vals.max()) if not vals.empty else 0.0
+    tmp["color"] = tmp["valor"].map(lambda v: oferta_color_mapa(v, minim, maxim))
+    tmp["opacitat"] = np.where(tmp["valor"].notna(), 0.78, 0.35)
+    return _geojson_mapa(tmp, ["nom_muni", "valor_txt", "metrica", "color", "opacitat"])
+
+
+# Es crea un sol cop: abans es tornava a construir per a cadascun dels 947 municipis.
+OFERTA_PALETA_MAPA = colors.LinearSegmentedColormap.from_list("oferta_paleta_mapa", [OFERTA_COLOR_CLAR, OFERTA_COLOR_FOSC])
 
 
 def oferta_color_mapa(valor, minim, maxim):
@@ -8660,28 +8738,23 @@ def oferta_color_mapa(valor, minim, maxim):
     if maxim == minim:
         return OFERTA_COLOR_BARRES
     ratio = (float(valor) - minim) / (maxim - minim)
-    rgba = colors.LinearSegmentedColormap.from_list("oferta_paleta_mapa", [OFERTA_COLOR_CLAR, OFERTA_COLOR_FOSC])(ratio)
-    return colors.to_hex(rgba)
+    return colors.to_hex(OFERTA_PALETA_MAPA(ratio))
 
 
-def oferta_folium_map(tmp, title):
-    tiles = TILES_FOSC if st.session_state.get("theme") == "dark" else TILES_CLAR
-    # Sense width/height: la mida la fixa st_folium. Especificar-la també aquí feia que
-    # streamlit-folium calculés malament l'alçada de l'iframe (2.552 px per a un mapa de
-    # 760 px), deixant ~1.800 px de forat buit sota cada mapa (2026-09-07).
-    m = folium.Map([41.7, 1.6], zoom_start=8, tiles=tiles, attr=TILES_ATRIBUCIO)
-    vals = tmp["valor"].dropna()
-    minim = float(vals.min()) if not vals.empty else 0.0
-    maxim = float(vals.max()) if not vals.empty else 0.0
+def oferta_folium_map(capa, title, dark_mode):
+    tiles = TILES_FOSC if dark_mode else TILES_CLAR
+    # Sense width/height: el mapa omple l'iframe de mostra_mapa_folium (MAPA_ALCADA).
+    m = folium.Map([41.7, 1.6], zoom_start=8, tiles=None)
+    folium.TileLayer(tiles, attr=TILES_ATRIBUCIO, max_native_zoom=TILES_ZOOM_NATIU_MAX).add_to(m)
     folium.GeoJson(
-        tmp,
+        capa,
         name=title,
         tooltip=folium.GeoJsonTooltip(fields=["nom_muni", "valor_txt", "metrica"], aliases=["Municipi:", "Valor:", "Mètrica:"], localize=True, sticky=True),
         style_function=lambda feature: {
-            "fillColor": oferta_color_mapa(feature["properties"].get("valor"), minim, maxim),
+            "fillColor": feature["properties"]["color"],
             "color": OFERTA_COLOR_MUTED,
             "weight": 0.35,
-            "fillOpacity": 0.78 if feature["properties"].get("valor") is not None else 0.35,
+            "fillOpacity": feature["properties"]["opacitat"],
         },
         highlight_function=lambda feature: {"weight": 1.4, "color": OFERTA_COLOR_FOSC, "fillOpacity": 0.9},
     ).add_to(m)
@@ -8701,21 +8774,64 @@ def oferta_preparar_punts_habitatges(dades_totals, any_estudi, tipologia):
     return df.to_dict("records")
 
 
+# Distància màxima (m) perquè dos habitatges comparteixin punt al mapa d'habitatges en oferta.
+OFERTA_DISTANCIA_AGRUPACIO_M = 15
+
+
+def _distancia_m(lat1, lon1, lat2, lon2):
+    """Distància real en metres entre dos punts (fórmula del haversinus)."""
+    f1, f2 = math.radians(lat1), math.radians(lat2)
+    a = math.sin((f2 - f1) / 2) ** 2 + math.cos(f1) * math.cos(f2) * math.sin(math.radians(lon2 - lon1) / 2) ** 2
+    return 2 * 6_371_000 * math.asin(math.sqrt(a))
+
+
 def oferta_agrupar_punts_habitatges(punts):
-    """Agrupa els habitatges que comparteixen coordenades (mateix edifici/promoció,
-    arrodonit a 5 decimals ~1m) en un únic punt de mapa: evita que el clúster mostri
-    un número sense poder-hi accedir mai (coordenades idèntiques no es poden separar
-    fent zoom, per molt que s'hi apropi). Cada grup porta la llista completa
-    d'habitatges d'aquella ubicació per construir-ne un popup agregat."""
-    grups = {}
+    """Agrupa en un únic punt de mapa els habitatges del mateix edifici o d'edificis
+    contigus: primer els que comparteixen coordenades (arrodonides a 5 decimals, ~1 m) i
+    després les ubicacions a OFERTA_DISTANCIA_AGRUPACIO_M metres o menys. Abans només
+    s'agrupaven les coordenades idèntiques, i les ubicacions a pocs metres (sovint el mateix
+    edifici anunciat per dues immobiliàries: 116 ubicacions a menys de 15 m el 2026 en
+    plurifamiliar) quedaven en un clúster amb un número que no es desfeia ni al zoom màxim.
+    Cada grup porta la llista completa d'habitatges per construir-ne un popup agregat.
+
+    Agrupació per líder: les ubicacions es recorren de més a menys habitatges i cadascuna
+    s'afegeix al grup més proper a la distància màxima o menys, o n'obre un de nou. El punt
+    del grup és la ubicació que l'ha obert, de manera que dos punts del mapa mai no queden a
+    menys d'aquesta distància i cap habitatge no queda més lluny del seu punt (sense
+    l'encadenament de punt en punt, que podria ajuntar tot un carrer)."""
+    ubicacions = {}
     for p in punts:
-        key = (round(p["latitude"], 5), round(p["longitude"], 5))
-        grups.setdefault(key, []).append(p)
+        ubicacions.setdefault((round(p["latitude"], 5), round(p["longitude"], 5)), []).append(p)
+    # Ordre determinista: primer les ubicacions amb més habitatges, que seran el punt del grup.
+    ordre = sorted(ubicacions.items(), key=lambda kv: (-len(kv[1]), kv[0]))
+    # Quadrícula aproximada en metres per comparar només amb els grups de les cel·les
+    # veïnes. Les cel·les fan el doble de la distància màxima perquè l'aproximació (metres
+    # per grau de longitud a 41,7°) no deixi cap veí fora; la comprovació final és la real.
+    dist_max = OFERTA_DISTANCIA_AGRUPACIO_M
+    cella = 2 * dist_max
+    m_lat = 111_320.0
+    m_lon = m_lat * math.cos(math.radians(41.7))
+    grups, quadricula = [], {}
+    for (lat, lon), units in ordre:
+        cx, cy = int(lon * m_lon // cella), int(lat * m_lat // cella)
+        millor, dist_millor = None, dist_max
+        for dx in (-1, 0, 1):
+            for dy in (-1, 0, 1):
+                for g in quadricula.get((cx + dx, cy + dy), ()):
+                    dist = _distancia_m(lat, lon, g["latitude"], g["longitude"])
+                    if dist <= dist_millor:
+                        millor, dist_millor = g, dist
+        if millor is None:
+            millor = {"latitude": lat, "longitude": lon, "units": []}
+            grups.append(millor)
+            quadricula.setdefault((cx, cy), []).append(millor)
+        millor["units"].extend(units)
     resultat = []
-    for (lat, lon), units in grups.items():
+    for g in grups:
+        units = g["units"]
         preus = [u["Preu m2 útil"] for u in units if pd.notna(u.get("Preu m2 útil"))]
         resultat.append({
-            "latitude": lat, "longitude": lon,
+            "latitude": g["latitude"], "longitude": g["longitude"],
             "Municipi": units[0].get("Municipi", ""),
             "n": len(units),
             "preu_min": min(preus) if preus else None,
@@ -8727,7 +8843,8 @@ def oferta_agrupar_punts_habitatges(punts):
 
 def oferta_popup_grup_habitatges(grup):
     """Popup d'un punt del mapa: si només hi ha 1 habitatge, la fitxa d'abans; si n'hi
-    ha més d'un (edifici/promoció amb diverses unitats a la mateixa coordenada), una
+    ha més d'un (edifici/promoció amb diverses unitats al mateix punt, vegeu
+    oferta_agrupar_punts_habitatges), una
     taula amb totes (amb scroll intern si n'hi ha moltes) en comptes d'intentar
     separar-les visualment al mapa."""
     n = grup["n"]
@@ -8752,7 +8869,7 @@ def oferta_popup_grup_habitatges(grup):
     )
     return f"""
     <div style='font-family: Arial, sans-serif; min-width: 280px; max-width: 340px;'>
-      <b>{grup['Municipi']} — {titol} en aquesta ubicació</b>
+      <b>{grup['Municipi']} — {titol} en aquest punt</b>
       <div style='max-height: 220px; overflow-y: auto; margin-top: 6px;'>
         <table style='width:100%; border-collapse: collapse; font-size: 12px;'>
           <thead>
@@ -8767,10 +8884,21 @@ def oferta_popup_grup_habitatges(grup):
     """
 
 
-def oferta_mapa_punts_habitatges(punts):
-    tiles = TILES_FOSC if st.session_state.get("theme") == "dark" else TILES_CLAR
-    # Sense width/height: la mida la fixa st_folium (vegeu la nota a oferta_folium_map).
-    m = folium.Map([41.7, 1.6], zoom_start=8, tiles=tiles, attr=TILES_ATRIBUCIO)
+@st.cache_data(show_spinner=False, max_entries=16)
+def oferta_html_mapa_punts(_punts, any_estudi, tipologia, dark_mode):
+    """El mapa d'habitatges en oferta ja renderitzat (vegeu mostra_mapa_folium), un sol cop
+    per any, tipologia i tema, i compartit entre sessions. La clau és any + tipologia i no
+    la llista de punts (~5.000 registres que caldria tornar a resumir a cada clic): és d'on
+    surt _punts (oferta_preparar_punts_habitatges), i les dades de l'Atlas només canvien en
+    reiniciar el servidor (oferta_carregant_dades no té arguments)."""
+    return oferta_mapa_punts_habitatges(_punts, dark_mode).get_root().render()
+
+
+def oferta_mapa_punts_habitatges(punts, dark_mode):
+    tiles = TILES_FOSC if dark_mode else TILES_CLAR
+    # Sense width/height: el mapa omple l'iframe de mostra_mapa_folium (MAPA_ALCADA).
+    m = folium.Map([41.7, 1.6], zoom_start=8, tiles=None)
+    folium.TileLayer(tiles, attr=TILES_ATRIBUCIO, max_native_zoom=TILES_ZOOM_NATIU_MAX).add_to(m)
     dades_fast = []
     for grup in oferta_agrupar_punts_habitatges(punts):
         if grup["n"] > 1:
@@ -8791,8 +8919,58 @@ def oferta_mapa_punts_habitatges(punts):
         return marker;
     }
     """
-    FastMarkerCluster(dades_fast, callback=callback, name="Habitatges en oferta").add_to(m)
+    # A partir del zoom 17 cada punt es veu amb el seu marcador, sense números: amb
+    # l'agrupació a 15 m ja no queden punts prou a prop per tapar-se del tot.
+    FastMarkerCluster(dades_fast, callback=callback, name="Habitatges en oferta", options={"disableClusteringAtZoom": 17}).add_to(m)
     return m
+
+
+# st.fragment: canviar el tipus de mapa, l'indicador, l'any o la tipologia només torna a
+# executar aquesta funció, i no l'script sencer. Llegeix oferta_df_final i
+# oferta_dades_totals, que la secció "Estudi d'Oferta Obra Nova" calcula abans de cridar-la.
+@st.fragment
+def oferta_seccio_mapa_interactiu():
+    opc = {
+        "Habitatges en oferta": "Unitats",
+        "Superfície mitjana": "Superfície mitjana (m² útils)",
+        "Preu mitjà": "Preu mitjà de venda de l'habitatge (€)",
+        "Preu m² útil": "Preu de venda per m² útil (€)",
+    }
+    dark_mode = st.session_state.get("theme") == "dark"
+    tipus_mapa = st.radio("Tipus de mapa", ["Mapa de municipis", "Mapa d'habitatges en oferta"], horizontal=True, label_visibility="collapsed", key="oferta_tipus_mapa")
+
+    if tipus_mapa == "Mapa de municipis":
+        with st.container(border=True):
+            left, mid, right = st.columns(3)
+            with left:
+                label = st.selectbox("Indicador", list(opc.keys()), key="oferta_mapa_indicador")
+            with mid:
+                any_mapa = st.selectbox("Any", [2025, 2026], index=1, key="oferta_mapa_any")
+            with right:
+                tipologia = st.selectbox("Tipologia", sorted(oferta_df_final["Tipologia"].dropna().str.lower().str.capitalize().unique().tolist()), key="oferta_mapa_tipologia")
+
+        tipologia_upper = tipologia.upper()
+        variable_mapa = opc[label]
+        df_map = oferta_prep_map_df(oferta_df_final, any_mapa, tipologia_upper, variable_mapa)
+
+        oferta_titol_seccio("Mapa de municipis")
+        mostra_mapa_folium(oferta_html_mapa_municipis(shapefile_mun, df_map, f"{label} · {tipologia.lower().capitalize()} · {any_mapa}", dark_mode))
+    else:
+        with st.container(border=True):
+            left, right = st.columns(2)
+            with left:
+                any_punts = st.selectbox("Any", [2025, 2026], index=1, key="oferta_any_punts")
+            with right:
+                tipologies_punts = sorted(oferta_dades_totals["TIPOG"].dropna().unique().tolist())
+                index_tipologia = tipologies_punts.index("Habitatges plurifamiliars") if "Habitatges plurifamiliars" in tipologies_punts else 0
+                tipologia_punts = st.selectbox("Tipologia", tipologies_punts, index=index_tipologia, key="oferta_tipologia_punts")
+
+        oferta_titol_seccio("Mapa d'habitatges en oferta")
+        punts = oferta_preparar_punts_habitatges(oferta_dades_totals, any_punts, tipologia_punts)
+        if punts:
+            mostra_mapa_folium(oferta_html_mapa_punts(punts, any_punts, tipologia_punts, dark_mode))
+        else:
+            st.info("No hi ha coordenades disponibles.")
 
 
 if selected == "Estudi d'Oferta Obra Nova":
@@ -8851,12 +9029,11 @@ if selected == "Estudi d'Oferta Obra Nova":
         st.write(oferta_text_resum_cat(dades, selected_edition), unsafe_allow_html=True)
         oferta_mostra_text_informe("introduccio", selected_edition)
 
-        _oferta_shp = oferta_load_shp(SHAPEFILE_MUN)
         mapa_left, mapa_right = st.columns((1, 1))
         with mapa_left:
-            oferta_mostra("Mapa provincial de l'oferta d'habitatges", oferta_mapa_provincial_oferta(dades, _oferta_shp))
+            oferta_mostra("Mapa provincial de l'oferta d'habitatges", oferta_mapa_provincial_oferta(dades, shapefile_mun))
         with mapa_right:
-            oferta_mostra("Mapa municipal de l'oferta d'habitatges", oferta_mapa_municipal_oferta(dades, _oferta_shp))
+            oferta_mostra("Mapa municipal de l'oferta d'habitatges", oferta_mapa_municipal_oferta(dades, shapefile_mun))
 
         left_col, right_col = st.columns((1, 1))
         with left_col:
@@ -9097,52 +9274,7 @@ if selected == "Estudi d'Oferta Obra Nova":
                 oferta_mostra("Evolució del preu venda mitjà per tipologia d'habitatge", oferta_grafic_evolucio(oferta_df_final, "Districtes de Barcelona", selected_dis, "Preu mitjà de venda de l'habitatge (€)", 2025, ed))
 
     if oferta_selected == "Mapa interactiu":
-        opc = {
-            "Habitatges en oferta": "Unitats",
-            "Superfície mitjana": "Superfície mitjana (m² útils)",
-            "Preu mitjà": "Preu mitjà de venda de l'habitatge (€)",
-            "Preu m² útil": "Preu de venda per m² útil (€)",
-        }
-        tipus_mapa = st.radio("Tipus de mapa", ["Mapa de municipis", "Mapa d'habitatges en oferta"], horizontal=True, label_visibility="collapsed", key="oferta_tipus_mapa")
-
-        if tipus_mapa == "Mapa de municipis":
-            with st.container(border=True):
-                left, mid, right = st.columns(3)
-                with left:
-                    label = st.selectbox("Indicador", list(opc.keys()), key="oferta_mapa_indicador")
-                with mid:
-                    any_mapa = st.selectbox("Any", [2025, 2026], index=1, key="oferta_mapa_any")
-                with right:
-                    tipologia = st.selectbox("Tipologia", sorted(oferta_df_final["Tipologia"].dropna().str.lower().str.capitalize().unique().tolist()), key="oferta_mapa_tipologia")
-
-            tipologia_upper = tipologia.upper()
-            variable_mapa = opc[label]
-            df_map = oferta_prep_map_df(oferta_df_final, any_mapa, tipologia_upper, variable_mapa)
-
-            oferta_titol_seccio("Mapa de municipis")
-            _oferta_shp_mapa = oferta_load_shp(SHAPEFILE_MUN)
-            if _oferta_shp_mapa is not None:
-                tmp = oferta_build_tmp(_oferta_shp_mapa, df_map)
-                m = oferta_folium_map(tmp, f"{label} · {tipologia.lower().capitalize()} · {any_mapa}")
-                st_folium(m, use_container_width=True, height=MAPA_ALCADA, returned_objects=[])
-            else:
-                st.warning("El shapefile no conté un camp municipal compatible.")
-        else:
-            with st.container(border=True):
-                left, right = st.columns(2)
-                with left:
-                    any_punts = st.selectbox("Any", [2025, 2026], index=1, key="oferta_any_punts")
-                with right:
-                    tipologies_punts = sorted(oferta_dades_totals["TIPOG"].dropna().unique().tolist())
-                    index_tipologia = tipologies_punts.index("Habitatges plurifamiliars") if "Habitatges plurifamiliars" in tipologies_punts else 0
-                    tipologia_punts = st.selectbox("Tipologia", tipologies_punts, index=index_tipologia, key="oferta_tipologia_punts")
-
-            oferta_titol_seccio("Mapa d'habitatges en oferta")
-            punts = oferta_preparar_punts_habitatges(oferta_dades_totals, any_punts, tipologia_punts)
-            if punts:
-                st_folium(oferta_mapa_punts_habitatges(punts), use_container_width=True, height=MAPA_ALCADA, returned_objects=[])
-            else:
-                st.info("No hi ha coordenades disponibles.")
+        oferta_seccio_mapa_interactiu()
 
     mostra_font(FONTS_INDICADORS["Estudi d'Oferta"])
 

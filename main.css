@@ -605,11 +605,14 @@ div[data-testid="stMetric"]  label{
 
 /* ==========================================================================
    MAPA INTERACTIU
-   Ajust visual lleuger per al component Folium embegut.
+   Ajust visual lleuger per als mapes folium (components.html precedit de
+   l'àncora mapa-folium-anchor, vegeu mostra_mapa_folium a APP_Dades.py).
+   L'àncora evita tocar els altres components.html de la pàgina.
    ========================================================================== */
-iframe[title="streamlit_folium.st_folium"] {
+.element-container:has(.mapa-folium-anchor) + .element-container iframe {
+  width: 100%;
   border: 1px solid var(--app-border);
-  border-radius: 8px;
+  border-radius: 10px;
   background: var(--app-surface);
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
 }
@@ -912,24 +915,6 @@ html, body, [data-testid="stAppViewContainer"], section.main { scroll-behavior: 
   margin: 0;
 }
 
-
-/* ==========================================================================
-   MAPES (streamlit-folium)
-   streamlit-folium 0.22 dimensiona malament l'iframe quan es fa servir
-   use_container_width=True: mesurat en producció i en local, generava iframes
-   de 2.200-3.100 px d'alçada per a mapes de ~700 px, deixant un forat buit
-   enorme sota cada mapa (que a més es pintava fosc). L'alçada es fixa aquí,
-   que és determinista, en comptes de confiar en el càlcul del component.
-   Ha de coincidir amb MAPA_ALCADA d'APP_Dades.py (720) + el marge intern
-   del document folium (20px).
-   ========================================================================== */
-iframe[title="streamlit_folium.st_folium"] {
-  height: 740px !important;
-  min-height: 740px !important;
-  max-height: 740px !important;
-  width: 100% !important;
-  border-radius: 10px;
-}
 
 /* ==========================================================================
    GRÀFICS EN PANTALLES ESTRETES
