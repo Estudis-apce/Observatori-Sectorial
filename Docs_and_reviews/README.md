@@ -28,7 +28,16 @@ Abrir Python por otra vía sin esa opción puede regenerar la carpeta original.
    [fase 1](_revisio_calculs/OPTIMIZACION_MAPAS_FASE1.md) (diagnóstico, mapas más ligeros) y
    [fase 2](_revisio_calculs/OPTIMIZACION_MAPAS_FASE2.md) (mapas cacheados, `st.fragment`, y zoom
    y agrupación del mapa de viviendas).
-5. Otros planes y diagnósticos del mismo directorio, según el encargo.
+5. [Informe de conjuntura del sector](_revisio_calculs/PLA_INFORME_CONJUNTURA.md): descarga del PDF
+   desde "Informe de Mercat i Sectorial" y cómo publicar una edición nueva.
+6. [Compraventas por titularidad, nacionalidad y superficie](_revisio_calculs/PLA_COMPRAVENDES_ADQUIRENT_I_SUPERFICIE.md):
+   propuesta completa; fases 1 (Catalunya), 2 (provincias y Barcelona ciudad) y 3 (comparativa entre
+   provincias) aplicadas.
+7. [Registro de cambios del 01/10/2026](_revisio_calculs/REGISTRE_CANVIS_2026-10-01.md): copia de
+   seguridad, cómo volver atrás y el detalle de los cambios de ese día.
+8. [Pendiente para el próximo push](_revisio_calculs/PENDENT_PROPER_PUSH.md): qué hay en local
+   sin publicar desde el último commit (datos y app), verificación pendiente y commits propuestos.
+9. Otros planes y diagnósticos del mismo directorio, según el encargo.
 
 La antigua propuesta de orden de carpetas se conserva como antecedente y lleva una
 nota con la ubicación vigente. No ejecutar automáticamente sus fases antiguas.

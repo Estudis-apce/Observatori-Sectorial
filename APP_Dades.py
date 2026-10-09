@@ -332,6 +332,11 @@ INFORMES_SECTORIALS = [
     {"any": 2023, "img": "Resources/informes/Informe-sectorial-CATALUNYA_2023_FINAL.jpg", "url": "https://apcebcn.cat/wp-content/uploads/2024/08/Informe-Sectorial-2023.pdf"},
     {"any": 2022, "img": "Resources/informes/Informe-sectorial-CATALUNYA_2022_FINAL.jpg", "url": "https://apcebcn.cat/wp-content/uploads/2023/07/informe-sectorial-2022.pdf"},
 ]
+# Informe de conjuntura del sector: l'app ofereix per descarregar el PDF més recent d'aquesta
+# carpeta (vegeu _informe_conjuntura_actual). Per publicar-ne una edició nova n'hi ha prou de
+# substituir-hi el PDF -- mantenint la data de la ponència "dd.mm.aa" al nom -- i fer push:
+# el codi no es toca. L'HTML que genera el mateix procés no es puja (.gitignore).
+CARPETA_INFORME_CONJUNTURA = "Resources/Informe general"
 ATLAS_PERIODES = ["2025_H1", "2026_H1"]  # format correcte: "<any>_H1" (no "H1_<any>")
 
 # ========== FORMATEO ==========
@@ -3524,6 +3529,46 @@ def concatenate_lists(list1, list2):
     return(result_list)
 
 
+def _informe_conjuntura_actual():
+    """El PDF de l'informe de conjuntura que s'ofereix per descarregar: el de data d'edició més
+    recent de CARPETA_INFORME_CONJUNTURA (normalment només n'hi ha un). La data és la primera
+    "dd.mm.aa" del nom, que és la de la ponència: "Ponència general 02.10.26 (gen 29.09.26
+    16.13).pdf" és del 2/10/2026 i no del 29/9 en què es va generar. Si el nom no en porta, la de
+    modificació del fitxer. Retorna (ruta, data, mtime_ns, mida) o None si no n'hi ha cap."""
+    carpeta = Path(CARPETA_INFORME_CONJUNTURA)
+    if not carpeta.is_dir():
+        return None
+    candidats = []
+    for ruta in carpeta.iterdir():
+        if ruta.suffix.lower() != ".pdf" or not ruta.is_file():
+            continue
+        info = ruta.stat()
+        data = None
+        m = re.search(r"(\d{2})\.(\d{2})\.(\d{2})", ruta.name)
+        if m:
+            try:
+                data = datetime(2000 + int(m.group(3)), int(m.group(2)), int(m.group(1))).date()
+            except ValueError:
+                data = None
+        if data is None:
+            data = datetime.fromtimestamp(info.st_mtime).date()
+        candidats.append((data, info.st_mtime_ns, str(ruta), info.st_size))
+    if not candidats:
+        return None
+    data, mtime_ns, ruta, mida = max(candidats)
+    return ruta, data, mtime_ns, mida
+
+
+# cache_resource i no cache_data: els bytes són immutables, així que es poden compartir entre
+# sessions sense copiar-los (cache_data en faria una còpia de ~10 MB a cada lectura). mtime_ns i
+# mida formen part de la clau perquè, si se substitueix el fitxer amb el mateix nom, no se
+# serveixi l'edició anterior.
+@st.cache_resource(show_spinner=False, max_entries=2)
+def _llegeix_informe_conjuntura(ruta, mtime_ns, mida):
+    with open(ruta, "rb") as f:
+        return f.read()
+
+
 @st.cache_data(show_spinner=False)
 def _img_to_data_uri(path):
     """Llegeix una imatge local i la retorna com a base64, per incrustar-la en HTML (p.ex. una
@@ -3533,7 +3578,7 @@ def _img_to_data_uri(path):
 
 
 @st.cache_data(show_spinner=False, max_entries=500)
-def _build_download_href(df, filename, number_format="#,##0"):
+def _build_download_href(df, filename, number_format="#,##0", files_un_decimal=()):
     # Part cara (to_excel + base64, ~46 ms): es cacheja segons el contingut del
     # DataFrame i el nom del fitxer, per no regenerar l'Excel a cada rerun quan
     # les dades no han canviat. Es converteix a numèric perquè Excel ho tracti
@@ -3573,10 +3618,13 @@ def _build_download_href(df, filename, number_format="#,##0"):
                 cell.fill = BRAND_FILL
                 cell.font = BRAND_FONT
         for row_idx in range(data_start, ws.max_row + 1):
+            # files_un_decimal: files (per nom, columna A) que porten un decimal en una taula
+            # on la resta són recomptes, p. ex. els "% X" de les compravendes per adquirent.
+            format_fila = "#,##0.0" if ws.cell(row_idx, 1).value in files_un_decimal else number_format
             for col_idx in range(2, ws.max_column + 1):
                 cell = ws.cell(row_idx, col_idx)
                 if isinstance(cell.value, (int, float)):
-                    cell.number_format = number_format
+                    cell.number_format = format_fila
                 cell.fill = ZEBRA_FILL if (row_idx - data_start) % 2 == 1 else WHITE_FILL
         # Sense vores enlloc (evita els divisors negres per defecte d'algunes graelles).
         for row in ws.iter_rows(min_row=1, max_row=ws.max_row):
@@ -3595,12 +3643,12 @@ def _build_download_href(df, filename, number_format="#,##0"):
     return f"""<a href="data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,{b64}" download="{filename}">
     <button class="download-button">Descarregar</button></a>"""
 
-def filedownload(df, filename, number_format="#,##0"):
+def filedownload(df, filename, number_format="#,##0", files_un_decimal=()):
     # Si rebem un Styler (table_trim / table_year), agafem les dades numèriques
     # crues (.data), que sí que són "hashables" per a la memòria cau.
     if hasattr(df, "data"):
         df = df.data
-    return _build_download_href(df, filename, number_format)
+    return _build_download_href(df, filename, number_format, tuple(files_un_decimal))
 
 # ========== PLOTLY HELPERS ==========
 def _plotly_titol(text, per_linia=70):
@@ -3793,6 +3841,247 @@ def stacked_bar_mensual_plotly(table_n, selection_n, title_main, title_y, title_
     fig = go.Figure(data=traces, layout=layout)
     fig.update_yaxes(range=[0, 100])
     return fig
+
+
+def stacked_bar_100_plotly(table_n, selection_n, title_main, year_ini):
+    """Barres apilades al 100 % d'una taula ANUAL les columnes de la qual ja sumen 100.
+    A diferència de stacked_bar_plotly fa servir tota la paleta (fins a 6 categories,
+    no 3) i l'eix va de 0 a 100. Les columnes es diuen "% X" i la llegenda en mostra "X"."""
+    plot_cat = _sense_cua_buida(table_n.loc[[a for a in table_n.index if int(a) >= year_ini], selection_n])
+    noms = [c[2:] if c.startswith("% ") else c for c in selection_n]
+    traces = [
+        go.Bar(x=plot_cat.index, y=plot_cat[col], name=nom,
+               marker=dict(color=PLOTLY_PALETTE[i % len(PLOTLY_PALETTE)]),
+               hovertemplate="%{x}: %{y:.1f} %<extra>" + nom + "</extra>")
+        for i, (col, nom) in enumerate(zip(selection_n, noms))
+    ]
+    layout = _plotly_layout(title_main, "% de compravendes", title_x="Any", tickformat=".0f", barmode="stack")
+    fig = go.Figure(data=traces, layout=layout)
+    fig.update_yaxes(range=[0, 100], ticksuffix=" %")
+    return fig
+
+
+# ==========================================================================
+# COMPRAVENDES SEGONS L'ADQUIRENT I LA SUPERFÍCIE (Agència de l'Habitatge de Catalunya)
+# Desglossaments de les compravendes registrades que ja arriben a DT_terr: titularitat
+# (persona física o jurídica), nacionalitat (nacionals o estrangers) i superfície de l'habitatge,
+# per a Catalunya, les quatre províncies i "Barcelona ciutat". Vegeu
+# _revisio_calculs/PLA_COMPRAVENDES_ADQUIRENT_I_SUPERFICIE.md.
+# ==========================================================================
+# (nom de la pestanya, codi de tipologia a les columnes trviv{n,s}...; None = nou + segona mà)
+COMPRAVENDES_TIPOLOGIES = [("Total", None), ("Habitatge nou", "n"), ("Segona mà", "s")]
+# Nom curt de la tipologia per als títols dels gràfics: amb "habitatge nou" els títols no hi cabien
+# i es tallaven a mig gràfic.
+COMPRAVENDES_TIP_CURT = {None: "total", "n": "nou", "s": "segona mà"}
+# Les etiquetes de les categories (els noms de columna de les taules) no poden portar cap
+# paraula de _NIVELL_PARAULES (p. ex. "superf"): són recomptes, i un 0 hi és un valor (0
+# habitatges de menys de 40 m² en un trimestre), no "sense dada". Els títols de l'apartat i dels
+# gràfics ("tema", "titol_linia") sí que poden dir "superfície": no són cap columna.
+COMPRAVENDES_DESGLOSSAMENTS = [
+    dict(clau="titularitat", titol="TITULARITAT DE L'ADQUIRENT", tema="titularitat de l'adquirent",
+         categories=[("fisica", "Persona física"), ("juridica", "Persona jurídica")],
+         linia=["Persona jurídica"], titol_linia="% de compravendes per persones jurídiques",
+         comp_cat="Persona jurídica", comp_titol="% de compravendes per persones jurídiques"),
+    dict(clau="nacionalitat", titol="NACIONALITAT DE L'ADQUIRENT", tema="nacionalitat de l'adquirent",
+         categories=[("nacionals", "Nacionals"), ("estrangers", "Estrangers")],
+         linia=["Estrangers"], titol_linia="% de compravendes per estrangers",
+         comp_cat="Estrangers", comp_titol="% de compravendes per estrangers"),
+    dict(clau="superficie", titol="SUPERFÍCIE DE L'HABITATGE", tema="superfície de l'habitatge",
+         categories=[("menys40m2", "Menys de 40 m²"), ("40-70m2", "De 40 a 70 m²"),
+                     ("70-90m2", "De 70 a 90 m²"), ("mes90m2", "Més de 90 m²")],
+         linia=["Menys de 40 m²", "De 40 a 70 m²", "De 70 a 90 m²", "Més de 90 m²"],
+         titol_linia="% de compravendes per superfície de l'habitatge",
+         comp_cat="Més de 90 m²", comp_titol="% de compravendes de més de 90 m²"),
+]
+# Territoris de la comparativa entre províncies que tenen aquests desglossaments (la font no els
+# publica per àmbits territorials).
+COMPARATIVA_PROVINCIES_DESGLOSSAMENT = ("Barcelona", "Girona", "Lleida", "Tarragona")
+COMPRAVENDES_SENSE_DADES = "Sense dades"
+COMPRAVENDES_TOTAL = "Total compravendes"
+
+
+@st.cache_data(show_spinner=False)
+def compravendes_desglossament(_dt_q, geo, tipologia, clau):
+    """Taula trimestral (índex "Trimestre", des del 2014T1) i anual (índex "Any", només els
+    anys amb els quatre trimestres) d'un desglossament: compravendes de cada categoria, el
+    total i el % de cada categoria sobre el total.
+
+    - Total de referència: nacionals + estrangers, que és igual a física + jurídica. Amb
+      les compravendes que ja mostra l'app (trvivn_/trvivs_) hi ha diferències d'1 o 2 en
+      pocs trimestres (2025T3-2026T1 a Catalunya, Barcelona i Tarragona): són fitxers
+      diferents de l'Agència i es fa servir aquest total perquè els % sumin 100.
+    - Les quatre mides no arriben al total: la font té una columna "Sense dades" que la ETL
+      no exporta i que aquí es reconstrueix com total − mides (comprovat que coincideix amb
+      la font en tots els territoris).
+    - Tipologia None ("Total") = habitatge nou + segona mà.
+    - L'anual es calcula sumant els trimestres (idèntic a DT_terr_y, comprovat en 1.248 de
+      1.248 casos), i els % anuals surten dels totals de l'any, no de la mitjana dels
+      trimestrals."""
+    categories = next(d for d in COMPRAVENDES_DESGLOSSAMENTS if d["clau"] == clau)["categories"]
+    q = _dt_q.assign(Trimestre=_dt_q["Trimestre"].astype(str)).set_index("Trimestre")
+    q = q[q.index >= "2014T1"]
+    tips = ["n", "s"] if tipologia is None else [tipologia]
+
+    def serie(cat):
+        cols = [f"trviv{t}{cat}_{geo}" for t in tips]
+        if any(c not in q.columns for c in cols):
+            return pd.Series(np.nan, index=q.index)
+        return sum(pd.to_numeric(q[c], errors="coerce") for c in cols)
+
+    total = serie("nacionals") + serie("estrangers")
+    taula = pd.DataFrame({nom: serie(cat) for cat, nom in categories}, index=q.index)
+    if clau == "superficie":
+        taula[COMPRAVENDES_SENSE_DADES] = total - taula.sum(axis=1, min_count=len(categories))
+    taula[COMPRAVENDES_TOTAL] = total
+    taula = _sense_cua_buida(taula)
+    anys = pd.Index(taula.index.str[:4], name="Any")
+    complets = taula[COMPRAVENDES_TOTAL].notna().groupby(anys).sum() == 4
+    anual = taula.groupby(anys).sum(min_count=1)
+    anual = anual[complets.reindex(anual.index, fill_value=False)]
+    for t in (taula, anual):
+        for c in [c for c in t.columns if c != COMPRAVENDES_TOTAL]:
+            t[f"% {c}"] = t[c] / t[COMPRAVENDES_TOTAL] * 100
+    return taula, anual
+
+
+def _compravendes_quotes_any(taula, any_sel, cats):
+    """% i nombre de compravendes de cada categoria a l'any `any_sel`, i variació en punts
+    percentuals. Un any en curs es compara amb els mateixos trimestres de l'any anterior
+    (mateix criteri que la resta de targetes de l'app). Retorna None si l'any no té dades."""
+    files = taula[taula.index.str.startswith(str(any_sel)) & taula[COMPRAVENDES_TOTAL].notna()]
+    if files.empty:
+        return None
+    anterior = taula.reindex([f"{int(any_sel) - 1}{i[4:]}" for i in files.index])
+    nombre = files[cats].sum()
+    pct = nombre / files[COMPRAVENDES_TOTAL].sum() * 100
+    if anterior[COMPRAVENDES_TOTAL].notna().all():
+        dpp = pct - anterior[cats].sum() / anterior[COMPRAVENDES_TOTAL].sum() * 100
+    else:
+        dpp = pd.Series(np.nan, index=cats)
+    return pct, nombre, dpp, len(files)
+
+
+def _taula_desglossament_html(taula):
+    """Les taules de l'app porten un sol nombre de decimals (format_dataframes); aquí hi
+    conviuen recomptes (sense decimals) i percentatges (un decimal)."""
+    df = taula.data if hasattr(taula, "data") else taula
+    files_pct = [i for i in df.index if str(i).startswith("% ")]
+    sty = df.style.format(thousands=".", decimal=",", precision=0, na_rep="—")
+    if files_pct:
+        sty = sty.format(subset=pd.IndexSlice[files_pct, :], thousands=".", decimal=",", precision=1, na_rep="—")
+    return sty.to_html()
+
+
+def mostra_compravendes_desglossament(geo, nom, any_sel, sufix_fitxer):
+    """Bloc "Compravendes segons l'adquirent i la superfície" d'un territori: tres pestanyes
+    (total, habitatge nou, segona mà) i, a cadascuna, els tres desglossaments amb targetes,
+    taules trimestral i anual (amb Excel) i dos gràfics. `geo` és el nom del territori a les
+    columnes de DT_terr ("Catalunya", "Barcelona ciutat"...) i `nom`, el que es mostra."""
+    st.markdown("")
+    st.subheader(f"COMPRAVENDES SEGONS L'ADQUIRENT I LA SUPERFÍCIE A {nom.upper()}")
+    codi_fitxer = {None: "total", "n": "nou", "s": "segona_ma"}
+    pestanyes = st.tabs([nom_tip for nom_tip, _ in COMPRAVENDES_TIPOLOGIES])
+    for pestanya, (nom_tip, tip) in zip(pestanyes, COMPRAVENDES_TIPOLOGIES):
+        with pestanya:
+            for d in COMPRAVENDES_DESGLOSSAMENTS:
+                taula, anual = compravendes_desglossament(DT_terr, geo, tip, d["clau"])
+                cats = [n for _, n in d["categories"]] + ([COMPRAVENDES_SENSE_DADES] if d["clau"] == "superficie" else [])
+                files_pct = tuple(f"% {c}" for c in cats)
+                st.markdown(f'<div class="custom-box">{d["titol"]}</div>', unsafe_allow_html=True)
+                quotes = _compravendes_quotes_any(taula, any_sel, cats)
+                for col, cat in zip(st.columns(len(cats)), cats):
+                    with col:
+                        if quotes is None:
+                            st_metric(label=f"**{cat}**", value="No disponible")
+                        else:
+                            pct, nombre, dpp, _ = quotes
+                            # round() abans de formatar: sense això una variació de -0,03 sortia "-0,0 p.p.".
+                            variacio = None if pd.isna(dpp[cat]) else round(float(dpp[cat]), 1)
+                            st_metric(
+                                label=f"**{cat}** ({int(nombre[cat]):,})".replace(",", "."),
+                                value=f"{pct[cat]:.1f} %",
+                                delta=None if variacio is None else ("0.0 p.p." if variacio == 0 else f"{variacio:+.1f} p.p."),
+                                delta_color="off",
+                            )
+                if quotes is not None and quotes[3] < 4:
+                    st.caption(f"{any_sel}: dades dels {quotes[3]} primers trimestres, comparades amb el mateix període de {int(any_sel) - 1}. Entre parèntesis, el nombre de compravendes.")
+                else:
+                    st.caption("Entre parèntesis, el nombre de compravendes. La variació és en punts percentuals respecte de l'any anterior.")
+                fitxer = f"Compravendes_{d['clau']}_{codi_fitxer[tip]}_{sufix_fitxer}"
+                st.markdown(_taula_desglossament_html(table_trim(taula, TAULES_PANTALLA_ANY_INICI, formated=False)), unsafe_allow_html=True)
+                st.markdown(filedownload(table_trim(taula, 2014, formated=False), f"{fitxer}.xlsx", files_un_decimal=files_pct), unsafe_allow_html=True)
+                st.markdown(_taula_desglossament_html(table_year(anual, 2014, formated=False)), unsafe_allow_html=True)
+                st.markdown(filedownload(table_year(anual, 2014, formated=False), f"{fitxer}_anual.xlsx", files_un_decimal=files_pct), unsafe_allow_html=True)
+                left_col, right_col = st.columns((1, 1))
+                with left_col:
+                    st_plotly_chart(stacked_bar_100_plotly(anual, list(files_pct), f"Distribució anual segons la {d['tema']} · {COMPRAVENDES_TIP_CURT[tip]}", 2014), use_container_width=True, responsive=True)
+                with right_col:
+                    fig = line_plotly(taula, [f"% {c}" for c in d["linia"]], f"{d['titol_linia']} · {COMPRAVENDES_TIP_CURT[tip]}", "% de compravendes")
+                    fig.update_yaxes(tickformat=".0f", ticksuffix=" %")
+                    fig.update_traces(hovertemplate="%{x}: %{y:.1f} %")
+                    st_plotly_chart(fig, use_container_width=True, responsive=True)
+
+def bar_plotly_comparativa_100_n(taula_pct, title_main, year_label):
+    """100 % apilat per ubicació amb N categories (bar_plotly_comparativa_100 en porta dues).
+    `taula_pct`: files = ubicacions, columnes = categories amb el seu % (cada fila suma 100)."""
+    traces = [
+        go.Bar(x=taula_pct.index.tolist(), y=taula_pct[cat].values, name=cat,
+               marker=dict(color=PLOTLY_PALETTE[i % len(PLOTLY_PALETTE)]),
+               hovertemplate="%{x}: %{y:.1f} %<extra>" + cat + "</extra>")
+        for i, cat in enumerate(taula_pct.columns)
+    ]
+    layout = _plotly_layout(f"{title_main} ({year_label})", "% de compravendes", barmode="stack", tickformat=".0f")
+    fig = go.Figure(data=traces, layout=layout)
+    fig.update_yaxes(range=[0, 100], ticksuffix=" %")
+    return fig
+
+
+def comparativa_compravendes_desglossament(locations, any_sel, etiqueta_singular, sufix_fitxer):
+    """Apartat "Compravendes segons l'adquirent i la superfície" de la comparativa entre
+    províncies: tres pestanyes (total, habitatge nou, segona mà) i, a cadascuna, els tres
+    desglossaments (titularitat, nacionalitat i superfície) amb la taula anual del % clau per
+    província (amb Excel), el repartiment de l'any seleccionat i l'evolució anual del % clau.
+    Fa servir les mateixes dades que mostra_compravendes_desglossament, així que les xifres de
+    cada província coincideixen amb les de la seva pantalla."""
+    locs = [l for l in locations if l in COMPARATIVA_PROVINCIES_DESGLOSSAMENT]
+    if len(locs) < 2:
+        return
+    codi_fitxer = {None: "total", "n": "nou", "s": "segona_ma"}
+    st.markdown("**Compravendes segons l'adquirent i la superfície**")
+    pestanyes = st.tabs([nom_tip for nom_tip, _ in COMPRAVENDES_TIPOLOGIES])
+    for pestanya, (nom_tip, tip) in zip(pestanyes, COMPRAVENDES_TIPOLOGIES):
+        with pestanya:
+            for d in COMPRAVENDES_DESGLOSSAMENTS:
+                cats = [n for _, n in d["categories"]] + ([COMPRAVENDES_SENSE_DADES] if d["clau"] == "superficie" else [])
+                st.markdown(f'<div class="custom-box">{d["titol"]}</div>', unsafe_allow_html=True)
+                dades = {loc: compravendes_desglossament(DT_terr, loc, tip, d["clau"]) for loc in locs}
+                # % de cada categoria a l'any seleccionat (inclòs un any en curs parcial, igual
+                # que les targetes de cada província) per província.
+                reparto, trimestres = {}, None
+                for loc, (taula, _) in dades.items():
+                    q = _compravendes_quotes_any(taula, any_sel, cats)
+                    if q is not None:
+                        reparto[loc] = q[0]
+                        trimestres = q[3]
+                # Evolució anual (anys complets) del % clau per província.
+                evolucio = pd.DataFrame({loc: anual[f"% {d['comp_cat']}"] for loc, (_, anual) in dades.items()})
+                fitxer = f"Comparativa_compravendes_{d['clau']}_{codi_fitxer[tip]}_{sufix_fitxer}"
+                st.markdown(f"**{d['comp_titol']} per {etiqueta_singular}**")
+                st.markdown(comparativa_style_table(evolucio.T, precision=1).to_html(), unsafe_allow_html=True)
+                st.markdown(filedownload(evolucio.T, f"{fitxer}_anual.xlsx", files_un_decimal=tuple(evolucio.columns)), unsafe_allow_html=True)
+                left_col, right_col = st.columns((1, 1))
+                with left_col:
+                    if reparto:
+                        st_plotly_chart(bar_plotly_comparativa_100_n(pd.DataFrame(reparto).T[cats], f"Distribució segons la {d['tema']} per {etiqueta_singular} · {COMPRAVENDES_TIP_CURT[tip]}", any_sel), use_container_width=True, responsive=True)
+                    else:
+                        st.info(f"No hi ha dades de {any_sel}.")
+                with right_col:
+                    fig = line_plotly(evolucio, list(evolucio.columns), f"{d['comp_titol']} · {COMPRAVENDES_TIP_CURT[tip]}", "% de compravendes", title_x="Any")
+                    fig.update_yaxes(tickformat=".0f", ticksuffix=" %")
+                    fig.update_traces(hovertemplate="%{x}: %{y:.1f} %")
+                    st_plotly_chart(fig, use_container_width=True, responsive=True)
+                if trimestres is not None and trimestres < 4:
+                    st.caption(f"Repartiment de {any_sel}: dades dels {trimestres} primers trimestres. L'evolució anual només inclou anys complets.")
 
 # ==========================================================================
 # COMPARATIVA MULTI-UBICACIÓ (Comarques / Municipis / Districtes de Barcelona)
@@ -5329,6 +5618,7 @@ if selected == "Catalunya":
                     st_plotly_chart(line_plotly(table_Catalunya,  table_Catalunya.columns.tolist(), "Evolució trimestral de les compravendes d'habitatge per tipologia", "Nombre de compravendes"), use_container_width=True, responsive=True)
                 with right_col:
                     st_plotly_chart(stacked_bar_plotly(table_Catalunya_y,  table_Catalunya.columns.tolist()[1:3], "Evolució anual de les compravendes d'habitatge per tipologia", "Nombre de compravendes", 2014), use_container_width=True, responsive=True)
+                mostra_compravendes_desglossament("Catalunya", "Catalunya", selected_year_n, "Catalunya")
             if selected_index=="Preus":
                 min_year=2014
                 st.subheader("PREUS PER M\u00b2 CONSTRUÏT")
@@ -5526,6 +5816,8 @@ if selected == "Províncies i àmbits":
                 _pct_nova = (_t_any_nova.loc[_any_ref] / _t_any_total.loc[_any_ref] * 100).round(1)
                 st.markdown("**Proporció segona mà vs obra nova**")
                 st_plotly_chart(bar_plotly_comparativa_100(_pct_segona, _pct_nova, "Segona mà", "Obra nova", f"Proporció de compravendes per {pa_label_singular}", _any_ref), use_container_width=True, responsive=True)
+                if selected_option == "Províncies":
+                    comparativa_compravendes_desglossament(comp_pa_locations, selected_year_n, pa_label_singular, pa_suffix)
 
                 st.markdown('<div id="comp-pa-preus" class="viab-anchor"></div>', unsafe_allow_html=True)
                 st.subheader("COMPARATIVA — PREUS PER M² CONSTRUÏT")
@@ -5823,6 +6115,7 @@ if selected == "Províncies i àmbits":
                     st_plotly_chart(line_plotly(table_province, table_province.columns.tolist(), "Evolució trimestral de les compravendes d'habitatge per tipologia", "Nombre de compravendes"), use_container_width=True, responsive=True)
                 with right_col:
                     st_plotly_chart(bar_plotly(table_province_y, table_province.columns.tolist(), "Evolució anual de les compravendes d'habitatge per tipologia", "Nombre de compravendes", 2005), use_container_width=True, responsive=True)     
+                mostra_compravendes_desglossament(selected_geo, selected_geo, selected_year_n, selected_geo)
             if selected_index=="Preus":
                 min_year=2014
                 st.subheader(f"PREUS PER M\u00b2 CONSTRUÏT D'HABITATGE A {selected_geo.upper()}")
@@ -6500,6 +6793,11 @@ if selected=="Municipis":
                 st_plotly_chart(line_plotly(table_mun, table_mun.columns.tolist(), "Evolució trimestral de les compravendes d'habitatge per tipologia", "Nombre de compravendes"), use_container_width=True, responsive=True)
             with right_col:
                 st_plotly_chart(bar_plotly(table_mun_y, table_mun.columns.tolist(), "Evolució anual de les compravendes d'habitatge per tipologia", "Nombre de compravendes", 2005), use_container_width=True, responsive=True)
+            # Només Barcelona: la font (Agència de l'Habitatge de Catalunya) publica aquests
+            # desglossaments per Catalunya, les províncies i la ciutat de Barcelona, però no per
+            # a la resta de municipis. A DT_terr la ciutat es diu "Barcelona ciutat".
+            if selected_mun == "Barcelona":
+                mostra_compravendes_desglossament("Barcelona ciutat", "Barcelona", selected_year_n, "Barcelona_ciutat")
         if selected_index=="Preus":
             min_year=2014
             st.subheader(f"PREUS PER M\u00b2 CONSTRUÏT D'HABITATGE A {selected_mun.upper()}")
@@ -6733,7 +7031,11 @@ if selected=="Municipis":
                 st_metric("Renda neta per llar", value="No disponible")
             _st_metric_pick(sel, "Nombre de pensionistes")
             _st_metric_pick(sel, "Parc total de vehicles")
-            st_plotly_chart(bar_plotly_demografia(rentaneta_mun.rename(columns={"Año":"Any"}).set_index("Any"), ["rentanetahogar_" + selected_mun], "Evolució anual de la renda mitjana neta", "€", 2015), use_container_width=True, responsive=True)
+            # Mateix control que la targeta de sobre: sense la columna, el gràfic petava amb un
+            # KeyError i la resta de la pàgina ja no es pintava (passava als 18 municipis amb
+            # article quan DT_indicadors_demanda_potencial.json en portava la grafia de l'INE).
+            if _rn_col in rentaneta_mun.columns:
+                st_plotly_chart(bar_plotly_demografia(rentaneta_mun.rename(columns={"Año":"Any"}).set_index("Any"), [_rn_col], "Evolució anual de la renda mitjana neta", "€", 2015), use_container_width=True, responsive=True)
         with right:
             _st_metric_pick(sel, "Base imposable mitjana de l’IRPF (€)")
             _ibi_col = "IBI_quota_" + selected_mun
@@ -7456,6 +7758,21 @@ if selected == "Informe de Mercat i Sectorial":
                     tables_municipis_propers=tables_municipis_propers,
                     tabla_estudi_oferta_propers=tabla_estudi_oferta_propers,
                 )
+
+    st.markdown("")
+    st.subheader("INFORME DE CONJUNTURA DEL SECTOR")
+    _informe_conj = _informe_conjuntura_actual()
+    if _informe_conj is None:
+        st.info("L'informe de conjuntura no està disponible en aquest moment.")
+    else:
+        _ruta_conj, _data_conj, _mtime_conj, _mida_conj = _informe_conj
+        st.download_button(
+            "📄 Descarregar l'informe (PDF)",
+            data=_llegeix_informe_conjuntura(_ruta_conj, _mtime_conj, _mida_conj),
+            file_name=f"Informe_conjuntura_sector_{_data_conj:%Y-%m-%d}.pdf",
+            mime="application/pdf",
+            key="descarrega_informe_conjuntura",
+        )
 
     st.markdown("")
     st.subheader("INFORMES SECTORIALS APCE")

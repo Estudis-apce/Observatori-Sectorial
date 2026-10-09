@@ -1,0 +1,10 @@
+# Fitxers binaris: Git no els ha de tractar mai com a text ni convertir-ne els salts de
+# línia. Sense aquesta línia, Git va detectar com a text el PDF de Docs_and_reviews/docs i,
+# amb core.autocrlf=true, l'hauria fet malbé en descarregar-lo en un altre ordinador.
+*.pdf binary
+*.docx binary
+*.xlsx binary
+*.xls binary
+*.png binary
+*.jpg binary
+*.jpeg binary
