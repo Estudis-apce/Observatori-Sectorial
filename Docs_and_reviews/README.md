@@ -37,7 +37,9 @@ Abrir Python por otra vía sin esa opción puede regenerar la carpeta original.
    seguridad, cómo volver atrás y el detalle de los cambios de ese día.
 8. [Pendiente para el próximo push](_revisio_calculs/PENDENT_PROPER_PUSH.md): qué hay en local
    sin publicar desde el último commit (datos y app), verificación pendiente y commits propuestos.
-9. Otros planes y diagnósticos del mismo directorio, según el encargo.
+9. [Año por defecto de los desplegables](_revisio_calculs/PLA_ANY_PER_DEFECTE_2026.md): regla de los 2
+   trimestres, mapa solo con años cerrados y pruebas.
+10. Otros planes y diagnósticos del mismo directorio, según el encargo.
 
 La antigua propuesta de orden de carpetas se conserva como antecedente y lleva una
 nota con la ubicación vigente. No ejecutar automáticamente sus fases antiguas.

@@ -263,6 +263,10 @@ CURRENT_YEAR_LIMIT = 2026  # Límit superior (any) de les dades disponibles; ún
 #    anterior" a l'hora de triar entre dada anual tancada i estimació mensual/
 #    trimestral parcial (indicator_year, gràfics de barres anuals, KPIs del PDF).
 LAST_CLOSED_YEAR = CURRENT_YEAR_LIMIT - 1
+# Períodes que la font ha d'haver publicat perquè un any en curs passi a ser el
+# seleccionat per defecte als desplegables d'any (vegeu year_selector_options).
+MIN_TRIMESTRES_ANY_PER_DEFECTE = 2
+MIN_MESOS_ANY_PER_DEFECTE = 6
 
 # ========== VIABILITAT DE PROMOCIÓ ==========
 # Hipòtesis fixes replicades tal com estan a Viabilidad_promocion/APP_Dades.py
@@ -3426,6 +3430,15 @@ def _familia_de_columna(col):
     return col.rsplit("_", 1)[0] + "_" if "_" in col else col
 
 
+def _periodes_publicats(col, df, year, date_col="Fecha"):
+    """Quants períodes (trimestres o mesos, segons `df`) de `year` té publicats la
+    FAMÍLIA d'indicador de `col`, mirant totes les geografies alhora."""
+    familia = _familia_de_columna(col)
+    cols = [c for c in df.columns if c.startswith(familia)] or [col]
+    te_dada = df[cols].notna().any(axis=1)
+    return int((te_dada & (pd.to_datetime(df[date_col]).dt.year == year)).sum())
+
+
 def last_closed_year(col, df_annual, df_quarterly=None, df_monthly=None, date_col="Fecha"):
     """Darrer any TANCAT per a `col`: aquell del qual la FONT ja ha publicat tots
     els períodes (4 trimestres o 12 mesos).
@@ -3446,20 +3459,14 @@ def last_closed_year(col, df_annual, df_quarterly=None, df_monthly=None, date_co
     if col not in df_annual.columns:
         return None
     years = sorted(df_annual.loc[df_annual[col].notna(), date_col].astype(int).unique(), reverse=True)
-    familia = _familia_de_columna(col)
-
-    def _publicats(df, year):
-        cols = [c for c in df.columns if c.startswith(familia)] or [col]
-        te_dada = df[cols].notna().any(axis=1)
-        return int((te_dada & (pd.to_datetime(df[date_col]).dt.year == year)).sum())
 
     for year in years:
         if df_quarterly is not None and col in df_quarterly.columns:
-            if _publicats(df_quarterly, year) >= 4:
+            if _periodes_publicats(col, df_quarterly, year, date_col) >= 4:
                 return year
             continue
         if df_monthly is not None and col in df_monthly.columns:
-            if _publicats(df_monthly, year) >= 12:
+            if _periodes_publicats(col, df_monthly, year, date_col) >= 12:
                 return year
             continue
         return year
@@ -3505,18 +3512,44 @@ def last_available_year(col, df_quarterly=None, df_monthly=None, df_annual=None)
     return max(anys) if anys else None
 
 
-def year_selector_options(ref_col, df_quarterly=None, df_monthly=None, df_annual=None, start_year=2018):
+def _any_amb_prou_periodes(col, year, df_quarterly=None, df_monthly=None):
+    """True si la font de `col` ja ha publicat prou períodes de `year` perquè sigui
+    l'any per defecte del desplegable: 2 trimestres o 6 mesos. Es compta per família
+    d'indicador, com a last_closed_year: que un poble petit no tingui valor en un
+    trimestre no ha de canviar-li l'any amb què s'obre la pantalla."""
+    if df_quarterly is not None and col in df_quarterly.columns and _periodes_publicats(col, df_quarterly, year) >= MIN_TRIMESTRES_ANY_PER_DEFECTE:
+        return True
+    return df_monthly is not None and col in df_monthly.columns and _periodes_publicats(col, df_monthly, year) >= MIN_MESOS_ANY_PER_DEFECTE
+
+
+def year_selector_options(ref_col, df_quarterly=None, df_monthly=None, df_annual=None, start_year=2018, nomes_tancats=False):
     """(available_years, index_year) per al desplegable "Selecciona un any"
     d'una pestanya concreta: available_years arriba fins a l'últim any amb
     ALGUNA dada real de `ref_col` (l'indicador propi d'aquella geografia,
     p. ex. iniviv_Barcelona per a Municipis=Barcelona), encara que sigui
-    parcial. La selecció per defecte (index_year) es queda a l'últim any
-    TANCAT, perquè la pàgina no obri mostrant "nan" sense que l'usuari ho
-    triï expressament."""
+    parcial. La selecció per defecte (index_year) és l'any en curs quan la
+    font ja n'ha publicat prou períodes (_any_amb_prou_periodes) i, si no,
+    l'últim any TANCAT: així, a principis d'any la pàgina no s'obre amb un
+    any gairebé buit.
+
+    Un any en curs mostra les xifres acumulades dels períodes publicats fins
+    ara, i les variacions es comparen amb el mateix període de l'any anterior
+    (indicator_year). A propòsit, la pantalla no ho avisa amb cap text: el
+    títol només diu "ANY 2026".
+
+    Amb nomes_tancats=True només s'ofereixen anys tancats. És el cas del mapa
+    interactiu: pinta totals absoluts, i els de mig any no es poden comparar
+    amb els d'un any sencer."""
+    if nomes_tancats:
+        return list(range(start_year, LAST_CLOSED_YEAR + 1)), LAST_CLOSED_YEAR
     last_real_year = last_available_year(ref_col, df_quarterly=df_quarterly, df_monthly=df_monthly, df_annual=df_annual)
     upper = max(last_real_year, LAST_CLOSED_YEAR) if last_real_year is not None else LAST_CLOSED_YEAR
     years = list(range(start_year, upper + 1))
     default = LAST_CLOSED_YEAR if LAST_CLOSED_YEAR in years else years[-1]
+    for year in range(upper, LAST_CLOSED_YEAR, -1):
+        if _any_amb_prou_periodes(ref_col, year, df_quarterly=df_quarterly, df_monthly=df_monthly):
+            default = year
+            break
     return years, default
 
 
@@ -4055,8 +4088,8 @@ def comparativa_compravendes_desglossament(locations, any_sel, etiqueta_singular
                 cats = [n for _, n in d["categories"]] + ([COMPRAVENDES_SENSE_DADES] if d["clau"] == "superficie" else [])
                 st.markdown(f'<div class="custom-box">{d["titol"]}</div>', unsafe_allow_html=True)
                 dades = {loc: compravendes_desglossament(DT_terr, loc, tip, d["clau"]) for loc in locs}
-                # % de cada categoria a l'any seleccionat (inclòs un any en curs parcial, igual
-                # que les targetes de cada província) per província.
+                # % de cada categoria a l'any `any_sel` per província. La crida li passa un any
+                # tancat, però si algun dia n'hi arriba un de parcial, la nota de sota ho explica.
                 reparto, trimestres = {}, None
                 for loc, (taula, _) in dades.items():
                     q = _compravendes_quotes_any(taula, any_sel, cats)
@@ -4580,18 +4613,17 @@ def folium_mapa_municipis(capa, any, name_var, dark_mode):
 
 # Defining years
 max_year= CURRENT_YEAR_LIMIT
-# L'any per defecte del selector es detecta a partir de les dades reals
-# (Producció nacional, indicador sempre disponible) en comptes de confiar
-# cegament en CURRENT_YEAR_LIMIT - 1: si CURRENT_YEAR_LIMIT s'actualitza
-# abans que arribin les dades completes del nou any (p. ex. es puja a l'any
-# següent però encara no hi ha 12 mesos/4 trimestres tancats), el selector
-# segueix oferint per defecte l'últim any que realment té dades completes,
-# evitant una selecció per defecte que apunti a una taula buida.
+# L'últim any tancat es detecta a partir de les dades reals (Producció nacional,
+# indicador sempre disponible) en comptes de confiar cegament en
+# CURRENT_YEAR_LIMIT - 1: si CURRENT_YEAR_LIMIT s'actualitza abans que arribin
+# les dades completes del nou any (p. ex. es puja a l'any següent però encara no
+# hi ha 12 mesos/4 trimestres tancats), LAST_CLOSED_YEAR segueix sent l'últim any
+# que realment té dades completes, evitant que apunti a una taula buida.
 _any_referencia = last_closed_year("iniviv_Nacional", DT_terr_y, df_quarterly=DT_terr, df_monthly=DT_monthly)
 if _any_referencia is not None:
     LAST_CLOSED_YEAR = min(LAST_CLOSED_YEAR, _any_referencia)
 available_years = list(range(2018, max_year + 1))  # inclou l'any en curs (2018..CURRENT_YEAR_LIMIT) com a opció seleccionable, encara que sigui parcial
-index_year = LAST_CLOSED_YEAR  # any seleccionat per defecte al selector: l'últim any tancat (l'any en curs cal triar-lo expressament)
+index_year = LAST_CLOSED_YEAR  # valor de partida: cada pestanya calcula el seu amb year_selector_options
 
 ###################################################################### VIABILITAT DE PROMOCIÓ: FUNCIONS ##########################################################################
 # Replica la lògica de càlcul de Viabilidad_promocion/APP_Dades.py (codi de
@@ -5817,7 +5849,8 @@ if selected == "Províncies i àmbits":
                 st.markdown("**Proporció segona mà vs obra nova**")
                 st_plotly_chart(bar_plotly_comparativa_100(_pct_segona, _pct_nova, "Segona mà", "Obra nova", f"Proporció de compravendes per {pa_label_singular}", _any_ref), use_container_width=True, responsive=True)
                 if selected_option == "Províncies":
-                    comparativa_compravendes_desglossament(comp_pa_locations, selected_year_n, pa_label_singular, pa_suffix)
+                    # Mateix any que el gràfic de proporció de sobre: la comparativa només treballa amb anys tancats.
+                    comparativa_compravendes_desglossament(comp_pa_locations, int(_any_ref), pa_label_singular, pa_suffix)
 
                 st.markdown('<div id="comp-pa-preus" class="viab-anchor"></div>', unsafe_allow_html=True)
                 st.subheader("COMPARATIVA — PREUS PER M² CONSTRUÏT")
@@ -7430,7 +7463,7 @@ def seccio_mapa_interactiu():
     with left:
         label = st.selectbox("**Selecciona un indicador:**", list(opcions.keys()), key="map_indicador")
     with right:
-        anys_mapa, index_year_mapa = year_selector_options("iniviv_Catalunya", df_quarterly=DT_terr, df_monthly=DT_monthly, df_annual=DT_terr_y, start_year=2015)
+        anys_mapa, index_year_mapa = year_selector_options("iniviv_Catalunya", df_quarterly=DT_terr, df_monthly=DT_monthly, df_annual=DT_terr_y, start_year=2015, nomes_tancats=True)
         any_mapa = st.selectbox("**Selecciona un any:**", anys_mapa, index=anys_mapa.index(index_year_mapa), key="map_any")
 
     var_prefix = opcions[label]
