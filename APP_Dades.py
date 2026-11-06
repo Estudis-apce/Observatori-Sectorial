@@ -1482,18 +1482,21 @@ def generar_pdf_municipi_tot(
     table_prov_tr_y: Optional[pd.DataFrame] = None,
     table_prov_pr_y: Optional[pd.DataFrame] = None,
     table_prov_llog_y: Optional[pd.DataFrame] = None,
+    table_prov_q: Optional[tuple] = None,   # (producció, compravendes, preus, lloguer) TRIMESTRALS de la província
     # --- Comparativa amb la capital de província (opcional: None si el municipi ÉS la capital)
     selected_capital: Optional[str] = None,
     table_cap_prod_y: Optional[pd.DataFrame] = None,
     table_cap_tr_y: Optional[pd.DataFrame] = None,
     table_cap_pr_y: Optional[pd.DataFrame] = None,
     table_cap_llog_y: Optional[pd.DataFrame] = None,
+    table_cap_q: Optional[tuple] = None,
     # --- Comparativa amb la comarca (opcional: None si no s'ha pogut determinar la comarca)
     selected_comarca: Optional[str] = None,
     table_comarca_prod_y: Optional[pd.DataFrame] = None,
     table_comarca_tr_y: Optional[pd.DataFrame] = None,
     table_comarca_pr_y: Optional[pd.DataFrame] = None,
     table_comarca_llog_y: Optional[pd.DataFrame] = None,
+    table_comarca_q: Optional[tuple] = None,
     # --- Comparativa amb els 10 municipis més propers (el crider només prepara les
     # dades cru, la taula final es construeix aquí dins amb _build_comp_df_wide)
     municipis_propers: Optional[List[str]] = None,
@@ -1508,12 +1511,44 @@ def generar_pdf_municipi_tot(
     # ==========================
     kpis_pdf = []
 
-    def _last_real_year(table_y, table_q, col):
-        """Últim any amb dada real de `col`, consultant primer la taula
-        trimestral (table_q) i després l'anual (table_y). Anàleg a
+    def _kpi_cens(valor, sufix="", decimals=1):
+        # El cens de l'INE només existeix del 2021. Un municipi sense dada surt com a
+        # "No disponible", igual que a les targetes de la web, no "nan%".
+        return f"{float(valor):.{decimals}f}{sufix}" if pd.notna(valor) else "No disponible"
+
+    def _any_en_curs_publicat(col_raw):
+        """L'any en curs, si la FONT ja n'ha publicat prou trimestres (None si no).
+
+        Es decideix per família d'indicador -- tots els municipis alhora -- i no
+        pels valors del municipi: un 0 és una dada als recomptes (36 iniciats al
+        1r trimestre i cap al 2n són dos trimestres publicats), i si el criteri
+        fos "el municipi té dos trimestres diferents de 0", un poble sense
+        habitatges plurifamiliars al 2n trimestre quedava a l'any anterior mentre
+        la resta de la fitxa ja anava al 2026. Mateix criteri que el desplegable
+        d'any de la web (year_selector_options)."""
+        for any_ in range(CURRENT_YEAR_LIMIT, LAST_CLOSED_YEAR, -1):
+            if _any_amb_prou_periodes(col_raw, any_, df_quarterly=DT_mun):
+                return str(any_)
+        return None
+
+    def _last_real_year(table_y, table_q, col, col_raw=None):
+        """Any de referència de `col`. Si es dóna `col_raw` (columna cruda de DT_mun,
+        p. ex. "iniviv_pluri_Abrera"), l'any en curs hi surt tan bon punt la font
+        n'ha publicat prou trimestres (_any_en_curs_publicat) i, si no, l'últim any
+        tancat. Sense `col_raw`, l'últim any amb dada real del municipi, consultant
+        primer la taula trimestral (table_q) i després l'anual (table_y). Anàleg a
         last_available_year(), però per a les taules ja tidificades per
         municipi que _safe_add_kpi ja rep (índex 'Trimestre'/'Any', nom de
         columna amigable en lloc del cru amb prefix de last_available_year)."""
+        if col_raw is not None:
+            any_curs = _any_en_curs_publicat(col_raw)
+            if any_curs is not None:
+                return any_curs
+            if table_y is not None and col in table_y.columns:
+                valid_y = table_y[col].dropna()
+                if not valid_y.empty:
+                    return str(valid_y.index[-1])
+            return None
         any_anual = None
         if table_y is not None and col in table_y.columns:
             valid_y = table_y[col].dropna()
@@ -1536,13 +1571,15 @@ def generar_pdf_municipi_tot(
                     return any_trim
         return any_anual
 
-    def _safe_add_kpi(table_y, table_q, col, label):
+    def _safe_add_kpi(table_y, table_q, col, label, prefix=None):
         # Abans es forçava year=CURRENT_YEAR_LIMIT: si aquest municipi/indicador
         # encara no tenia dada del darrer any, indicator_year() no llançava cap
         # excepció, simplement retornava NaN -- el "except" mai s'activava i el
         # KPI es mostrava literalment com "nan". Ara es detecta primer quin és
-        # l'últim any amb dada real d'aquest indicador concret.
-        year = _last_real_year(table_y, table_q, col)
+        # l'any de referència de l'indicador (vegeu _last_real_year); si el
+        # municipi no hi té valor, la targeta diu "No disponible" en lloc de
+        # tornar a l'any anterior, perquè tota la fitxa vagi al mateix any.
+        year = _last_real_year(table_y, table_q, col, col_raw=(f"{prefix}{selected_mun}" if prefix else None))
         if year is None:
             kpis_pdf.append((label, "No disponible", None))
             return
@@ -1563,12 +1600,12 @@ def generar_pdf_municipi_tot(
         kpis_pdf.append((f"{label} ({year})", f"{val:,.0f}".replace(",", "."), var_str))
 
     # Producció — totals + tipologies
-    _safe_add_kpi(table_mun_prod_y, table_mun_prod, "Habitatges iniciats", "Habitatges iniciats")
-    _safe_add_kpi(table_mun_prod_y, table_mun_prod, "Habitatges acabats", "Habitatges acabats")
-    _safe_add_kpi(table_mun_prod_y, table_mun_prod, "Habitatges iniciats plurifamiliars", "Iniciats plurifamiliars")
-    _safe_add_kpi(table_mun_prod_y, table_mun_prod, "Habitatges iniciats unifamiliars", "Iniciats unifamiliars")
-    _safe_add_kpi(table_mun_prod_y, table_mun_prod, "Habitatges acabats plurifamiliars", "Acabats plurifamiliars")
-    _safe_add_kpi(table_mun_prod_y, table_mun_prod, "Habitatges acabats unifamiliars", "Acabats unifamiliars")
+    _safe_add_kpi(table_mun_prod_y, table_mun_prod, "Habitatges iniciats", "Habitatges iniciats", "iniviv_")
+    _safe_add_kpi(table_mun_prod_y, table_mun_prod, "Habitatges acabats", "Habitatges acabats", "finviv_")
+    _safe_add_kpi(table_mun_prod_y, table_mun_prod, "Habitatges iniciats plurifamiliars", "Iniciats plurifamiliars", "iniviv_pluri_")
+    _safe_add_kpi(table_mun_prod_y, table_mun_prod, "Habitatges iniciats unifamiliars", "Iniciats unifamiliars", "iniviv_uni_")
+    _safe_add_kpi(table_mun_prod_y, table_mun_prod, "Habitatges acabats plurifamiliars", "Acabats plurifamiliars", "finviv_pluri_")
+    _safe_add_kpi(table_mun_prod_y, table_mun_prod, "Habitatges acabats unifamiliars", "Acabats unifamiliars", "finviv_uni_")
     try:
         if DT_mun_y is not None:
             col_prov = f"calprovgene_{selected_mun}"
@@ -1610,23 +1647,23 @@ def generar_pdf_municipi_tot(
         _log_pdf()
 
     # Compravendes
-    _safe_add_kpi(table_mun_tr_y, table_mun_tr, "Compravendes d'habitatge total", "Compravendes")
-    _safe_add_kpi(table_mun_tr_y, table_mun_tr, "Compravendes d'habitatge de segona mà", "Compravendes segona mà")
-    _safe_add_kpi(table_mun_tr_y, table_mun_tr, "Compravendes d'habitatge nou", "Compravendes habitatge nou")
+    _safe_add_kpi(table_mun_tr_y, table_mun_tr, "Compravendes d'habitatge total", "Compravendes", "trvivt_")
+    _safe_add_kpi(table_mun_tr_y, table_mun_tr, "Compravendes d'habitatge de segona mà", "Compravendes segona mà", "trvivs_")
+    _safe_add_kpi(table_mun_tr_y, table_mun_tr, "Compravendes d'habitatge nou", "Compravendes habitatge nou", "trvivn_")
 
     # Preus
-    _safe_add_kpi(table_mun_pr_y, table_mun_pr, "Preu d'habitatge total", "Preu €/m²")
-    _safe_add_kpi(table_mun_pr_y, table_mun_pr, "Preu d'habitatge de segona mà", "Preu €/m² segona mà")
-    _safe_add_kpi(table_mun_pr_y, table_mun_pr, "Preu d'habitatge nou", "Preu €/m² nou")
+    _safe_add_kpi(table_mun_pr_y, table_mun_pr, "Preu d'habitatge total", "Preu €/m²", "prvivt_")
+    _safe_add_kpi(table_mun_pr_y, table_mun_pr, "Preu d'habitatge de segona mà", "Preu €/m² segona mà", "prvivs_")
+    _safe_add_kpi(table_mun_pr_y, table_mun_pr, "Preu d'habitatge nou", "Preu €/m² nou", "prvivn_")
 
     # Superfície
-    _safe_add_kpi(table_mun_sup_y, table_mun_sup, "Superfície mitjana total", "Superfície mitjana (m² construït)")
-    _safe_add_kpi(table_mun_sup_y, table_mun_sup, "Superfície mitjana d'habitatge de segona mà", "Superfície mitjana segona mà (m² construït)")
-    _safe_add_kpi(table_mun_sup_y, table_mun_sup, "Superfície mitjana d'habitatge nou", "Superfície mitjana nou (m² construït)")
+    _safe_add_kpi(table_mun_sup_y, table_mun_sup, "Superfície mitjana total", "Superfície mitjana (m² construït)", "supert_")
+    _safe_add_kpi(table_mun_sup_y, table_mun_sup, "Superfície mitjana d'habitatge de segona mà", "Superfície mitjana segona mà (m² construït)", "supers_")
+    _safe_add_kpi(table_mun_sup_y, table_mun_sup, "Superfície mitjana d'habitatge nou", "Superfície mitjana nou (m² construït)", "supern_")
 
     # Lloguer
-    _safe_add_kpi(table_mun_llog_y, table_mun_llog, "Nombre de contractes de lloguer", "Contractes de lloguer")
-    _safe_add_kpi(table_mun_llog_y, table_mun_llog, "Rendes mitjanes de lloguer", "Renda mitjana lloguer (€/mes)")
+    _safe_add_kpi(table_mun_llog_y, table_mun_llog, "Nombre de contractes de lloguer", "Contractes de lloguer", "trvivalq_")
+    _safe_add_kpi(table_mun_llog_y, table_mun_llog, "Rendes mitjanes de lloguer", "Renda mitjana lloguer (€/mes)", "pmvivalq_")
     # === Altres indicadors -> IRPF al bloque de KPIs ===
     # === BLOQUE UNIFICADO: Altres indicadors (df_mun_idescat) ===
     try:
@@ -1636,17 +1673,20 @@ def generar_pdf_municipi_tot(
             # evita duplicados si este bloque se ejecuta más de una vez
             parc_labels = {
                 "Propietat", "Habitatges principals", "Habitatges no principals",
-                "Habitatges en lloguer", "Edat mitjana habitatges", "Superfície mitjana (m²)"
+                "Habitatges en lloguer", "Edat mitjana habitatges", "Superfície mitjana (m²)",
+                "Habitatges en propietat (2021)", "Habitatges principals (2021)",
+                "Habitatges no principals (2021)", "Habitatges en lloguer (2021)",
+                "Edat mitjana habitatges (2021)", "Superfície mitjana (m²) (2021)",
             }
             kpis_pdf = [k for k in kpis_pdf if k[0] not in parc_labels]
 
             parc_kpis = [
-                ("Habitatges en propietat",                f"{float(row['Perc_propiedad']):.1f}%", None),
-                ("Habitatges principals",    f"{(100.0 - float(row['Perc_noprincipales_y'])):.1f}%", None),
-                ("Habitatges no principals", f"{float(row['Perc_noprincipales_y']):.1f}%", None),
-                ("Habitatges en lloguer",    f"{float(row['Perc_alquiler']):.1f}%", None),
-                ("Edat mitjana habitatges",  f"{float(row['Edad media']):.1f}", None),
-                ("Superfície mitjana (m²)",  f"{float(row['Superficie media']):.1f}", None),
+                ("Habitatges en propietat (2021)",    _kpi_cens(row['Perc_propiedad'], "%"), None),
+                ("Habitatges principals (2021)",      _kpi_cens(100.0 - row['Perc_noprincipales_y'], "%"), None),
+                ("Habitatges no principals (2021)",   _kpi_cens(row['Perc_noprincipales_y'], "%"), None),
+                ("Habitatges en lloguer (2021)",      _kpi_cens(row['Perc_alquiler'], "%"), None),
+                ("Edat mitjana habitatges (2021)",    _kpi_cens(row['Edad media']), None),
+                ("Superfície mitjana (m²) (2021)",    _kpi_cens(row['Superficie media']), None),
             ]
 
             # Añadirlos al final del listado de KPIs
@@ -1735,35 +1775,65 @@ def generar_pdf_municipi_tot(
         def _fmt_share_pct(v):
             return f"{v:.1f}%".replace(".", ",") if v is not None else "n/d"
 
-        def _row_volume(label, table_mun, table_other, col):
-            val_mun = _last_val(table_mun, col)
-            val_other = _last_val(table_other, col)
-            # Pes del municipi sobre el conjunt: una diferència absoluta entre un
-            # municipi i tota la seva província no aporta res (l'escala sempre és
-            # molt més gran), però el % que hi representa sí és llegible — a
-            # diferència del % de variació anual, aquest és estable (quota, no
-            # creixement), s'explica a la nota sota el títol de cada taula.
-            share_pct = None
-            if val_mun is not None and val_other:
-                share_pct = (val_mun / val_other) * 100.0
-            return (label, _fmt_num(val_mun), _fmt_num(val_other), _fmt_share_pct(share_pct))
+        # Any de cada fila: el mateix que la targeta equivalent del resum (_last_real_year),
+        # perquè la comparativa no digui 2025 on el resum diu 2026. Es decideix pel municipi i
+        # s'aplica igual a la província, la capital, la comarca i els municipis propers: totes
+        # les columnes d'una fila són del mateix any. Un any en curs és l'acumulat dels trimestres
+        # publicats (indicator_year), com a les targetes.
+        _COMP_FILES = [
+            # (etiqueta, taula, columna, format, prefix cru, és un volum?)
+            ("Habitatges iniciats", 0, "Habitatges iniciats", _fmt_num, "iniviv_", True),
+            ("Habitatges acabats", 0, "Habitatges acabats", _fmt_num, "finviv_", True),
+            ("Compravendes", 1, "Compravendes d'habitatge total", _fmt_num, "trvivt_", True),
+            ("Preu €/m² (total)", 2, "Preu d'habitatge total", _fmt_eur, "prvivt_", False),
+            ("Preu €/m² (segona mà)", 2, "Preu d'habitatge de segona mà", _fmt_eur, "prvivs_", False),
+            ("Preu €/m² (nou)", 2, "Preu d'habitatge nou", _fmt_eur, "prvivn_", False),
+            ("Renda mitjana de lloguer (€/mes)", 3, "Rendes mitjanes de lloguer", _fmt_eur, "pmvivalq_", False),
+        ]
+        _taules_y_mun = (table_mun_prod_y, table_mun_tr_y, table_mun_pr_y, table_mun_llog_y)
+        _taules_q_mun = (table_mun_prod, table_mun_tr, table_mun_pr, table_mun_llog)
+        _anys_comp = {
+            etiqueta: _last_real_year(_taules_y_mun[idx], _taules_q_mun[idx], col, col_raw=f"{prefix}{selected_mun}")
+            for etiqueta, idx, col, _, prefix, _ in _COMP_FILES
+        }
 
-        def _row_level(label, table_mun, table_other, col):
-            val_mun = _last_val(table_mun, col)
-            val_other = _last_val(table_other, col)
-            diff = (val_mun - val_other) if (val_mun is not None and val_other is not None) else None
-            return (label, _fmt_eur(val_mun), _fmt_eur(val_other), _fmt_eur_diff(diff))
+        def _etiqueta_any(etiqueta):
+            any_ = _anys_comp.get(etiqueta)
+            return f"{etiqueta} ({any_})" if any_ else etiqueta
 
-        def _build_comp_df(other_label, prod_y, tr_y, pr_y, llog_y):
-            rows = [
-                _row_volume("Habitatges iniciats", table_mun_prod_y, prod_y, "Habitatges iniciats"),
-                _row_volume("Habitatges acabats", table_mun_prod_y, prod_y, "Habitatges acabats"),
-                _row_volume("Compravendes", table_mun_tr_y, tr_y, "Compravendes d'habitatge total"),
-                _row_level("Preu €/m² (total)", table_mun_pr_y, pr_y, "Preu d'habitatge total"),
-                _row_level("Preu €/m² (segona mà)", table_mun_pr_y, pr_y, "Preu d'habitatge de segona mà"),
-                _row_level("Preu €/m² (nou)", table_mun_pr_y, pr_y, "Preu d'habitatge nou"),
-                _row_level("Renda mitjana de lloguer (€/mes)", table_mun_llog_y, llog_y, "Rendes mitjanes de lloguer"),
-            ]
+        _nota_any_curs = (
+            " Les xifres de l'any en curs són acumulades dels trimestres publicats fins ara."
+            if any(a and int(a) > LAST_CLOSED_YEAR for a in _anys_comp.values()) else ""
+        )
+
+        def _val_any(table_y, table_q, col, year):
+            """Valor de `col` a `year` (any tancat de la taula anual o any en curs en viu,
+            com les targetes del resum). None si no n'hi ha."""
+            if table_y is None or table_q is None or year is None or col not in table_y.columns:
+                return None
+            try:
+                v = indicator_year(table_y, table_q, str(year), col, "level")
+            except Exception:
+                return None
+            return float(v) if pd.notna(v) and np.isfinite(v) else None
+
+        def _build_comp_df(other_label, taules_y, taules_q):
+            rows = []
+            for etiqueta, idx, col, _, _, es_volum in _COMP_FILES:
+                any_ = _anys_comp[etiqueta]
+                val_mun = _val_any(_taules_y_mun[idx], _taules_q_mun[idx], col, any_)
+                val_other = _val_any(taules_y[idx], taules_q[idx] if taules_q else None, col, any_)
+                if es_volum:
+                    # Pes del municipi sobre el conjunt: una diferència absoluta entre un
+                    # municipi i tota la seva província no aporta res (l'escala sempre és
+                    # molt més gran), però el % que hi representa sí és llegible — a
+                    # diferència del % de variació anual, aquest és estable (quota, no
+                    # creixement), s'explica a la nota sota el títol de cada taula.
+                    share_pct = (val_mun / val_other) * 100.0 if (val_mun is not None and val_other) else None
+                    rows.append((_etiqueta_any(etiqueta), _fmt_num(val_mun), _fmt_num(val_other), _fmt_share_pct(share_pct)))
+                else:
+                    diff = (val_mun - val_other) if (val_mun is not None and val_other is not None) else None
+                    rows.append((_etiqueta_any(etiqueta), _fmt_eur(val_mun), _fmt_eur(val_other), _fmt_eur_diff(diff)))
             return pd.DataFrame(
                 rows, columns=["Indicador", selected_mun, other_label, "Comparativa"]
             ).set_index("Indicador")
@@ -1773,23 +1843,16 @@ def generar_pdf_municipi_tot(
             fonts que _build_comp_df, però sense columna de comparativa (% o
             diferència): només el valor de cada municipi en paral·lel, per comparar-ne
             molts alhora. `tables_by_municipi` mapeja nom de municipi -> tupla
-            (prod_y, tr_y, pr_y, llog_y), inclòs el propi selected_mun."""
-            rows_spec = [
-                ("Habitatges iniciats", 0, "Habitatges iniciats", _fmt_num),
-                ("Habitatges acabats", 0, "Habitatges acabats", _fmt_num),
-                ("Compravendes", 1, "Compravendes d'habitatge total", _fmt_num),
-                ("Preu €/m² (total)", 2, "Preu d'habitatge total", _fmt_eur),
-                ("Preu €/m² (segona mà)", 2, "Preu d'habitatge de segona mà", _fmt_eur),
-                ("Preu €/m² (nou)", 2, "Preu d'habitatge nou", _fmt_eur),
-                ("Renda mitjana de lloguer (€/mes)", 3, "Rendes mitjanes de lloguer", _fmt_eur),
-            ]
+            (prod_y, tr_y, pr_y, llog_y, prod_q, tr_q, pr_q, llog_q), inclòs el propi
+            selected_mun."""
             data = {}
             for muni in municipis_ordered:
                 tabs = tables_by_municipi.get(muni)
                 if tabs is None:
                     continue
-                data[muni] = [fmt(_last_val(tabs[idx], col)) for _, idx, col, fmt in rows_spec]
-            return pd.DataFrame(data, index=[label for label, _, _, _ in rows_spec])
+                data[muni] = [fmt(_val_any(tabs[idx], tabs[idx + 4], col, _anys_comp[etiqueta]))
+                              for etiqueta, idx, col, fmt, _, _ in _COMP_FILES]
+            return pd.DataFrame(data, index=[_etiqueta_any(f[0]) for f in _COMP_FILES])
 
         # Nota: la capital de província comparteix nom amb la província a Catalunya
         # (p. ex. Martorell → "Província de Barcelona" I "Barcelona (capital)" —
@@ -1799,16 +1862,16 @@ def generar_pdf_municipi_tot(
         if selected_prov and table_prov_prod_y is not None:
             df_comp_prov = _build_comp_df(
                 f"Província de {selected_prov} (conjunt)",
-                table_prov_prod_y, table_prov_tr_y, table_prov_pr_y, table_prov_llog_y
+                (table_prov_prod_y, table_prov_tr_y, table_prov_pr_y, table_prov_llog_y), table_prov_q
             )
             items_comp_prov.append((
                 "table",
                 (
-                    f"Comparativa de {selected_mun} amb la província de {selected_prov} (últim any disponible)"
+                    f"Comparativa de {selected_mun} amb la província de {selected_prov}"
                     f'<br/><font size="9" color="#777777">Mitjana/suma del conjunt de tots els municipis '
                     f"de la província de {selected_prov}, incloent-hi la capital. A «Comparativa»: pes del "
                     f"municipi sobre el conjunt provincial (%) a producció/compravendes, o diferència en € "
-                    f"a preus/lloguer.</font>",
+                    f"a preus/lloguer.{_nota_any_curs}</font>",
                     df_comp_prov
                 )
             ))
@@ -1816,7 +1879,7 @@ def generar_pdf_municipi_tot(
         if selected_capital and table_cap_prod_y is not None:
             df_comp_cap = _build_comp_df(
                 f"{selected_capital} (capital)",
-                table_cap_prod_y, table_cap_tr_y, table_cap_pr_y, table_cap_llog_y
+                (table_cap_prod_y, table_cap_tr_y, table_cap_pr_y, table_cap_llog_y), table_cap_q
             )
             items_comp_prov.append((
                 "table",
@@ -1825,7 +1888,7 @@ def generar_pdf_municipi_tot(
                     f'<br/><font size="9" color="#777777">Dades específiques del municipi capital '
                     f"({selected_capital}), no del conjunt de la província. A «Comparativa»: pes del "
                     f"municipi respecte a la capital (%) a producció/compravendes, o diferència en € "
-                    f"a preus/lloguer.</font>",
+                    f"a preus/lloguer.{_nota_any_curs}</font>",
                     df_comp_cap
                 )
             ))
@@ -1833,17 +1896,17 @@ def generar_pdf_municipi_tot(
         if selected_comarca and table_comarca_prod_y is not None:
             df_comp_comarca = _build_comp_df(
                 f"Comarca del {selected_comarca}",
-                table_comarca_prod_y, table_comarca_tr_y, table_comarca_pr_y, table_comarca_llog_y
+                (table_comarca_prod_y, table_comarca_tr_y, table_comarca_pr_y, table_comarca_llog_y), table_comarca_q
             )
             items_comp_prov.append(("pagebreak", None))
             items_comp_prov.append((
                 "table",
                 (
-                    f"Comparativa de {selected_mun} amb la comarca del {selected_comarca} (últim any disponible)"
+                    f"Comparativa de {selected_mun} amb la comarca del {selected_comarca}"
                     f'<br/><font size="9" color="#777777">Mitjana/suma del conjunt de tots els municipis '
                     f"de la comarca del {selected_comarca}, incloent-hi {selected_mun}. A «Comparativa»: pes del "
                     f"municipi sobre el conjunt comarcal (%) a producció/compravendes, o diferència en € "
-                    f"a preus/lloguer.</font>",
+                    f"a preus/lloguer.{_nota_any_curs}</font>",
                     df_comp_comarca
                 )
             ))
@@ -1857,11 +1920,11 @@ def generar_pdf_municipi_tot(
             items_comp_prov.append((
                 "table",
                 (
-                    f"Comparativa de {selected_mun} amb els municipis més propers (darrer any disponible)"
+                    f"Comparativa de {selected_mun} amb els municipis més propers"
                     f'<br/><font size="9" color="#777777">Els municipis es trien únicament per '
                     f"proximitat geogràfica real (distància entre centroides), no necessàriament "
-                    f"de la mateixa comarca. Cada valor correspon al darrer any amb dada disponible "
-                    f"per a aquell municipi i indicador (pot no coincidir entre municipis).</font>",
+                    f"de la mateixa comarca. Tots els municipis es comparen per a l'any que indica "
+                    f"cada fila.{_nota_any_curs}</font>",
                     df_comp_municipis_propers
                 )
             ))
@@ -2262,10 +2325,10 @@ def generar_pdf_municipi_tot(
             ))
             # KPIs adicionales
             try:
-                kpis_pdf.append(("Grandària de la llar més freqüent", f"{row['Tamaño_hogar_frecuente']}", None))
-                kpis_pdf.append(("Grandària mitjana de la llar", f"{float(row['Tamaño medio del hogar']):.2f}", None))
-                kpis_pdf.append(("Població nacional", f"{(100.0 - float(row['Perc_extranjera'])):.1f}%", None))
-                kpis_pdf.append(("Població estrangera", f"{float(row['Perc_extranjera']):.1f}%", None))
+                kpis_pdf.append(("Grandària de la llar més freqüent (2021)", _kpi_cens(row['Tamaño_hogar_frecuente'], decimals=0), None))
+                kpis_pdf.append(("Grandària mitjana de la llar (2021)", _kpi_cens(row['Tamaño medio del hogar'], decimals=2), None))
+                kpis_pdf.append(("Població nacional (2021)", _kpi_cens(100.0 - row['Perc_extranjera'], "%"), None))
+                kpis_pdf.append(("Població estrangera (2021)", _kpi_cens(row['Perc_extranjera'], "%"), None))
             except Exception:
                 _log_pdf()
     except Exception:
@@ -2751,9 +2814,16 @@ def import_data(trim_limit, month_limit):
         st.stop()
 
     row21 = df_dp.loc[2021]
+    # El cens de l'INE ve amb els noms oficials de l'INE ("Castell-Platja d'Aro"), que no
+    # sempre són els de la resta de columnes del JSON ("Castell d'Aro, Platja d'Aro i
+    # s'Agaró", que és el que ha fet servir mun_lookup). El nom del cens es resol a part,
+    # amb els mateixos alies; sense això aquests municipis sortien amb tot el cens a NaN.
+    c21_raw_names = {k[len("c21propietat_"):] for k in df_dp.columns if k.startswith("c21propietat_")}
+    c21_raw_per_canon = {canon: raw for raw, canon in _build_name_lookup_dp(
+        c21_raw_names, maestro_mun["Municipi"].astype(str), MUN_ALIAS_DP).items()}
     censo_2021_rows = []
     for raw, canon in mun_lookup.items():
-        def _g(prefix, _raw=raw):
+        def _g(prefix, _raw=c21_raw_per_canon.get(canon, raw)):
             return row21.get(f"{prefix}_{_raw}", np.nan)
         pobtot = _g("c21poblaciototal")
         tinenca = _g("c21tinencatotal")
@@ -2870,6 +2940,33 @@ DT_monthly, DT_terr, DT_terr_y, DT_mun, DT_mun_y, DT_dis, DT_dis_y, maestro_mun,
 # Única font: DATA_FILE_ATLAS_OFERTA (BBDD_Atlas_trimmed.json), períodes ATLAS_PERIODES
 # ("2025_H1", "2026_H1"). Substitueix l'antic proveïdor (fulls històrics 2019-2025 +
 # maestro_estudi), ja no disponible.
+
+# L'Atlas escriu l'article davant ("El Masnou", "L'Hospitalet de Llobregat") i el maestro al
+# final ("Masnou, el", "Hospitalet de Llobregat, l'"); dos municipis tenen, a més, un nom
+# diferent. Sense això, 15 municipis ADD=SI (El Masnou, L'Hospitalet, La Garriga...)
+# no trobaven la seva oferta a la fitxa del municipi ni a l'informe PDF.
+ATLAS_ALIAS_MAESTRO = {
+    "castell-platja d'aro": "Castell d'Aro, Platja d'Aro i s'Agaró",
+    "sant carles de la ràpita": "Ràpita, la",
+}
+
+
+def _nom_maestro_des_d_atlas(nom, noms_maestro):
+    """El nom que té al maestro el municipi que l'Atlas anomena `nom`; si no es reconeix,
+    es deixa tal com és (aquell municipi simplement no sortirà a les fitxes)."""
+    if nom in noms_maestro:
+        return nom
+    alies = ATLAS_ALIAS_MAESTRO.get(str(nom).casefold())
+    if alies in noms_maestro:
+        return alies
+    m = re.match(r"^(Els|Les|El|La)\s+(.+)$", str(nom)) or re.match(r"^(L')(.+)$", str(nom))
+    if m:
+        candidat = f"{m.group(2)}, {m.group(1).lower()}"
+        if candidat in noms_maestro:
+            return candidat
+    return nom
+
+
 @st.cache_data(show_spinner=False)
 def _carrega_estudi_oferta_atlas():
     """Llegeix el JSON de l'Atlas (10x més ràpid que l'Excel equivalent) i el redueix a format
@@ -2880,6 +2977,8 @@ def _carrega_estudi_oferta_atlas():
     df = df[df["period_id"].isin(ATLAS_PERIODES)].copy()
     df["Any"] = pd.to_numeric(df["any"], errors="coerce").astype("Int64")
     df["Municipi"] = df["municipality"].astype("string").str.strip()
+    _noms_maestro = set(maestro_mun["Municipi"].astype(str))
+    df["Municipi"] = df["Municipi"].map(lambda n: _nom_maestro_des_d_atlas(n, _noms_maestro) if pd.notna(n) else n).astype("string")
     df["TIPOG"] = np.where(
         df["clase_vivienda"].astype("string").str.lower().eq("unifamiliar"),
         "HABITATGES UNIFAMILIARS", "HABITATGES PLURIFAMILIARS"
@@ -4467,16 +4566,26 @@ def _municipis_mes_propers(selected_mun, n=10):
     silenci a _build_yearly_tables_mun, deixant menys de `n` columnes a la
     taula final."""
     tracked = set(maestro_mun.loc[maestro_mun["ADD"] == "SI", "Municipi"].astype(str)) | {selected_mun}
+    # El shapefile porta els noms de l'ICGC ("el Masnou", "Castell-Platja d'Aro"), diferents
+    # dels del maestro ("Masnou, el") a 21 municipis ADD=SI: per nom no els trobava i la seva
+    # fitxa quedava sense comparativa de municipis propers (ni sortien com a propers dels
+    # altres). S'enllaça pel codi INE, que coincideix als 947 municipis, i es treballa amb
+    # els noms del maestro.
+    codis = pd.to_numeric(maestro_mun["Codi"], errors="coerce")
+    noms_per_codi = pd.Series(maestro_mun["Municipi"].astype(str).values, index=codis.values)
+    noms_per_codi = noms_per_codi[noms_per_codi.index.notna()]
+    noms_per_codi.index = noms_per_codi.index.astype(int)
     shp_proj = shapefile_mun.to_crs(epsg=25831)
-    shp_proj = shp_proj[shp_proj["nom_muni"].isin(tracked)]
+    shp_proj = shp_proj.assign(nom_maestro=shp_proj["codiine"].map(noms_per_codi))
+    shp_proj = shp_proj[shp_proj["nom_maestro"].isin(tracked)]
     centroides = shp_proj.geometry.centroid
-    sel_idx = shp_proj.index[shp_proj["nom_muni"] == selected_mun]
+    sel_idx = shp_proj.index[shp_proj["nom_maestro"] == selected_mun]
     if len(sel_idx) == 0:
         return [selected_mun]
     centre = centroides.loc[sel_idx[0]]
     dist_km = centroides.distance(centre) / 1000.0
     ordre = dist_km.sort_values().index
-    noms = shp_proj.loc[ordre, "nom_muni"].tolist()
+    noms = shp_proj.loc[ordre, "nom_maestro"].tolist()
     # el mateix selected_mun ja surt primer (distància 0), però per seguretat es
     # força explícitament i es descarten duplicats de nom si n'hi hagués
     noms = [selected_mun] + [n2 for n2 in noms if n2 != selected_mun]
@@ -7547,6 +7656,32 @@ if selected == "Informe de Mercat i Sectorial":
                     ["Any", "Nombre de contractes de lloguer", "Rendes mitjanes de lloguer"]
                 )
 
+                def _taules_trimestrals_geo(df_q, geo):
+                    """Les mateixes taules trimestrals que les del municipi (producció, compravendes,
+                    preus i lloguer) per a una altra geografia. Serveixen per calcular l'any en curs
+                    en viu a la comparativa territorial, igual que a les targetes del resum."""
+                    prod_q = tidy_Catalunya(
+                        df_q, ["Fecha"] + concatenate_lists(["iniviv_", "finviv_"], geo),
+                        f"{str(min_year)}-01-01", f"{str(max_year)}-12-31",
+                        ["Data", "Habitatges iniciats", "Habitatges acabats"]
+                    )
+                    tr_q = tidy_Catalunya(
+                        df_q, ["Fecha"] + concatenate_lists(["trvivt_", "trvivs_", "trvivn_"], geo),
+                        f"{str(min_year)}-01-01", f"{str(max_year)}-12-31",
+                        ["Data", "Compravendes d'habitatge total", "Compravendes d'habitatge de segona mà", "Compravendes d'habitatge nou"]
+                    )
+                    pr_q = tidy_Catalunya(
+                        df_q, ["Fecha"] + concatenate_lists(["prvivt_", "prvivs_", "prvivn_"], geo),
+                        f"{str(min_year)}-01-01", f"{str(max_year)}-12-31",
+                        ["Data", "Preu d'habitatge total", "Preu d'habitatge de segona mà", "Preu d'habitatge nou"]
+                    ).replace(0, np.nan)
+                    llog_q = tidy_Catalunya(
+                        df_q, ["Fecha"] + concatenate_lists(["trvivalq_", "pmvivalq_"], geo),
+                        f"{str(min_year)}-01-01", max_trim_lloguer,
+                        ["Data", "Nombre de contractes de lloguer", "Rendes mitjanes de lloguer"]
+                    )
+                    return (prod_q, tr_q, pr_q, llog_q)
+
                 # --- Comparativa amb la província: la província es dedueix dels 2 primers
                 # dígits del codi INE del municipi (08/17/25/43), mateixa lògica que
                 # _oferta_nom_provincia() al bloc de l'Estudi d'Oferta. DT_terr/DT_terr_y
@@ -7557,7 +7692,7 @@ if selected == "Informe de Mercat i Sectorial":
                     _prov_names_by_code.get(str(int(_codi_sel.iloc[0])).zfill(5)[:2])
                     if not _codi_sel.empty and pd.notna(_codi_sel.iloc[0]) else None
                 )
-                table_prov_prod_y = table_prov_tr_y = table_prov_pr_y = table_prov_llog_y = None
+                table_prov_prod_y = table_prov_tr_y = table_prov_pr_y = table_prov_llog_y = table_prov_q = None
                 if selected_prov:
                     try:
                         table_prov_prod_y = tidy_Catalunya_anual(
@@ -7584,15 +7719,16 @@ if selected == "Informe de Mercat i Sectorial":
                             min_year, annual_upper_bound(f"trvivalq_{selected_prov}", df_annual=DT_terr_y, df_quarterly=DT_terr),
                             ["Any", "Nombre de contractes de lloguer", "Rendes mitjanes de lloguer"]
                         )
+                        table_prov_q = _taules_trimestrals_geo(DT_terr, selected_prov)
                     except Exception:
-                        table_prov_prod_y = table_prov_tr_y = table_prov_pr_y = table_prov_llog_y = None
+                        table_prov_prod_y = table_prov_tr_y = table_prov_pr_y = table_prov_llog_y = table_prov_q = None
 
                 # --- Comparativa amb la capital de província: a Catalunya la capital
                 # comparteix nom amb la província (Barcelona/Girona/Lleida/Tarragona), així
                 # que és un municipi més dins DT_mun/DT_mun_y (mateix patró que selected_mun).
                 # Si el municipi seleccionat ÉS la capital, no té sentit comparar-lo amb ell mateix.
                 selected_capital = selected_prov if (selected_prov and selected_prov != selected_mun) else None
-                table_cap_prod_y = table_cap_tr_y = table_cap_pr_y = table_cap_llog_y = None
+                table_cap_prod_y = table_cap_tr_y = table_cap_pr_y = table_cap_llog_y = table_cap_q = None
                 if selected_capital:
                     try:
                         table_cap_prod_y = tidy_Catalunya_anual(
@@ -7619,15 +7755,16 @@ if selected == "Informe de Mercat i Sectorial":
                             min_year, annual_upper_bound(f"trvivalq_{selected_capital}", df_annual=DT_mun_y, df_quarterly=DT_mun),
                             ["Any", "Nombre de contractes de lloguer", "Rendes mitjanes de lloguer"]
                         )
+                        table_cap_q = _taules_trimestrals_geo(DT_mun, selected_capital)
                     except Exception:
-                        table_cap_prod_y = table_cap_tr_y = table_cap_pr_y = table_cap_llog_y = None
+                        table_cap_prod_y = table_cap_tr_y = table_cap_pr_y = table_cap_llog_y = table_cap_q = None
 
                 # --- Comparativa amb la comarca: mateix patró que la província (línies
                 # de dalt), però a partir de la columna de comarca de DT_terr/DT_terr_y
                 # (la mateixa font que ja usa la pestanya "Comarques").
                 _comarca_sel = maestro_mun.loc[maestro_mun["Municipi"] == selected_mun, "Comarca"]
                 selected_comarca = _comarca_sel.iloc[0] if not _comarca_sel.empty and pd.notna(_comarca_sel.iloc[0]) else None
-                table_comarca_prod_y = table_comarca_tr_y = table_comarca_pr_y = table_comarca_llog_y = None
+                table_comarca_prod_y = table_comarca_tr_y = table_comarca_pr_y = table_comarca_llog_y = table_comarca_q = None
                 if selected_comarca:
                     try:
                         table_comarca_prod_y = tidy_Catalunya_anual(
@@ -7654,8 +7791,9 @@ if selected == "Informe de Mercat i Sectorial":
                             min_year, annual_upper_bound(f"trvivalq_{selected_comarca}", df_annual=DT_terr_y, df_quarterly=DT_terr),
                             ["Any", "Nombre de contractes de lloguer", "Rendes mitjanes de lloguer"]
                         )
+                        table_comarca_q = _taules_trimestrals_geo(DT_terr, selected_comarca)
                     except Exception:
-                        table_comarca_prod_y = table_comarca_tr_y = table_comarca_pr_y = table_comarca_llog_y = None
+                        table_comarca_prod_y = table_comarca_tr_y = table_comarca_pr_y = table_comarca_llog_y = table_comarca_q = None
 
                 # --- Comparativa amb els 10 municipis més propers (qualsevol comarca,
                 # nomes per proximitat geogràfica real, vegeu _municipis_mes_propers).
@@ -7687,7 +7825,7 @@ if selected == "Informe de Mercat i Sectorial":
                             min_year, annual_upper_bound(f"trvivalq_{municipi}", df_annual=DT_mun_y, df_quarterly=DT_mun),
                             ["Any", "Nombre de contractes de lloguer", "Rendes mitjanes de lloguer"]
                         )
-                        return (prod_y, tr_y, pr_y, llog_y)
+                        return (prod_y, tr_y, pr_y, llog_y) + _taules_trimestrals_geo(DT_mun, municipi)
                     except Exception:
                         return None
 
@@ -7701,7 +7839,8 @@ if selected == "Informe de Mercat i Sectorial":
                     municipis_propers = _municipis_mes_propers(selected_mun, n=5)
                 except Exception:
                     municipis_propers = [selected_mun]
-                tables_municipis_propers = {selected_mun: (table_mun_prod_y, table_mun_tr_y, table_mun_pr_y, table_mun_llog_y)}
+                tables_municipis_propers = {selected_mun: (table_mun_prod_y, table_mun_tr_y, table_mun_pr_y, table_mun_llog_y,
+                                                           table_mun_prod, table_mun_tr, table_mun_pr, table_mun_llog)}
                 for _muni in municipis_propers:
                     if _muni == selected_mun:
                         continue
@@ -7774,18 +7913,21 @@ if selected == "Informe de Mercat i Sectorial":
                     table_prov_tr_y=table_prov_tr_y,
                     table_prov_pr_y=table_prov_pr_y,
                     table_prov_llog_y=table_prov_llog_y,
+                    table_prov_q=table_prov_q,
                     # Comparativa amb la capital de província
                     selected_capital=selected_capital,
                     table_cap_prod_y=table_cap_prod_y,
                     table_cap_tr_y=table_cap_tr_y,
                     table_cap_pr_y=table_cap_pr_y,
                     table_cap_llog_y=table_cap_llog_y,
+                    table_cap_q=table_cap_q,
                     # Comparativa amb la comarca
                     selected_comarca=selected_comarca,
                     table_comarca_prod_y=table_comarca_prod_y,
                     table_comarca_tr_y=table_comarca_tr_y,
                     table_comarca_pr_y=table_comarca_pr_y,
                     table_comarca_llog_y=table_comarca_llog_y,
+                    table_comarca_q=table_comarca_q,
                     # Comparativa amb els 10 municipis més propers
                     municipis_propers=municipis_propers,
                     tables_municipis_propers=tables_municipis_propers,
