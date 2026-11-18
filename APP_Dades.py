@@ -336,7 +336,18 @@ INFORMES_SECTORIALS = [
     {"any": 2023, "img": "Resources/informes/Informe-sectorial-CATALUNYA_2023_FINAL.jpg", "url": "https://apcebcn.cat/wp-content/uploads/2024/08/Informe-Sectorial-2023.pdf"},
     {"any": 2022, "img": "Resources/informes/Informe-sectorial-CATALUNYA_2022_FINAL.jpg", "url": "https://apcebcn.cat/wp-content/uploads/2023/07/informe-sectorial-2022.pdf"},
 ]
-# Informe de conjuntura del sector: l'app ofereix per descarregar el PDF més recent d'aquesta
+# Informes de conjuntura del sector: l'informe estadístic i les tres notes. Cada miniatura
+# enllaça amb el PDF, com els informes sectorials. Les notes, amb el PDF d'apcebcn.cat ("url");
+# l'informe estadístic, amb el PDF més recent de la carpeta de sota ("pdf_local"), perquè
+# s'obri en una pestanya nova (vegeu _url_pdf_obert). Les miniatures són JPEG de 570x795
+# (3x la mida a pantalla) a Resources/informes/.
+INFORMES_CONJUNTURA = [
+    {"titol": "Informe estadístic de conjuntura", "img": "Resources/informes/Informe-estadistic-conjuntura.jpg", "pdf_local": True},
+    {"titol": "Nota de conjuntura mensual", "img": "Resources/informes/Nota-conjuntura-mensual_2026-10.jpg", "url": "https://apcebcn.cat/wp-content/uploads/2026/10/Octubre_nota26_CAT.pdf"},
+    {"titol": "Nota de conjuntura no residencial", "img": "Resources/informes/Nota-no-residencial_2026-1S.jpg", "url": "https://apcebcn.cat/wp-content/uploads/2026/10/32-Conjuntura-no-residencial_1r_SEM_2026-CAT.pdf"},
+    {"titol": "Nota de conjuntura de lloguer", "img": "Resources/informes/Nota-lloguer_2026T2.jpg", "url": "https://apcebcn.cat/wp-content/uploads/2026/11/30-Nota-de-lloguer-26T2_CAT.pdf"},
+]
+# Informe estadístic de conjuntura: l'app enllaça amb el PDF més recent d'aquesta
 # carpeta (vegeu _informe_conjuntura_actual). Per publicar-ne una edició nova n'hi ha prou de
 # substituir-hi el PDF -- mantenint la data de la ponència "dd.mm.aa" al nom -- i fer push:
 # el codi no es toca. L'HTML que genera el mateix procés no es puja (.gitignore).
@@ -3691,14 +3702,34 @@ def _informe_conjuntura_actual():
     return ruta, data, mtime_ns, mida
 
 
-# cache_resource i no cache_data: els bytes són immutables, així que es poden compartir entre
-# sessions sense copiar-los (cache_data en faria una còpia de ~10 MB a cada lectura). mtime_ns i
-# mida formen part de la clau perquè, si se substitueix el fitxer amb el mateix nom, no se
-# serveixi l'edició anterior.
-@st.cache_resource(show_spinner=False, max_entries=2)
-def _llegeix_informe_conjuntura(ruta, mtime_ns, mida):
-    with open(ruta, "rb") as f:
-        return f.read()
+def _url_pdf_obert(ruta, clau):
+    """URL perquè un PDF de la carpeta del projecte s'obri en una pestanya nova des d'un enllaç.
+
+    El servidor d'estàtics de Streamlit només serveix imatges (qualsevol altre fitxer surt com a
+    text) i st.download_button força la descàrrega. El gestor de fitxers de mitjans, en canvi,
+    serveix el PDF amb el seu tipus ("application/pdf") i sense forçar descàrrega, així que el
+    navegador l'obre. És API interna de Streamlit (requirements fixa la 1.37.1): si falla, retorna
+    None i la targeta surt sense enllaç. Es torna a registrar a cada execució, perquè Streamlit
+    esborra els fitxers que una sessió ha deixat de fer servir."""
+    try:
+        from streamlit.runtime import Runtime
+        return Runtime.instance().media_file_mgr.add(str(ruta), "application/pdf", clau)
+    except Exception:
+        return None
+
+
+@st.cache_data(show_spinner=False)
+def _targeta_miniatura(url, img, text, alt):
+    """Targeta d'un document (informe sectorial, nota de conjuntura): la miniatura de la
+    portada com a enllaç que obre el PDF en una pestanya nova. Sense `url` (encara no
+    publicat) la targeta surt igual però sense enllaç."""
+    interior = (
+        f'<img src="data:image/jpeg;base64,{_img_to_data_uri(img)}" alt="{alt}" class="informe-sectorial-img">'
+        f'<span class="informe-sectorial-caption">{text}</span>'
+    )
+    if not url:
+        return f'<div class="informe-sectorial-link">{interior}</div>'
+    return f'<a href="{url}" target="_blank" rel="noopener noreferrer" class="informe-sectorial-link">{interior}</a>'
 
 
 @st.cache_data(show_spinner=False)
@@ -7935,30 +7966,25 @@ if selected == "Informe de Mercat i Sectorial":
                 )
 
     st.markdown("")
-    st.subheader("INFORME DE CONJUNTURA DEL SECTOR")
+    st.subheader("INFORMES DE CONJUNTURA DEL SECTOR")
+    # Mateixa quadrícula de columnes que els informes sectorials, perquè les miniatures
+    # quedin alineades i de la mateixa mida a les dues files.
+    n_columnes = max(len(INFORMES_SECTORIALS), len(INFORMES_CONJUNTURA))
     _informe_conj = _informe_conjuntura_actual()
-    if _informe_conj is None:
-        st.info("L'informe de conjuntura no està disponible en aquest moment.")
-    else:
-        _ruta_conj, _data_conj, _mtime_conj, _mida_conj = _informe_conj
-        st.download_button(
-            "📄 Descarregar l'informe (PDF)",
-            data=_llegeix_informe_conjuntura(_ruta_conj, _mtime_conj, _mida_conj),
-            file_name=f"Informe_conjuntura_sector_{_data_conj:%Y-%m-%d}.pdf",
-            mime="application/pdf",
-            key="descarrega_informe_conjuntura",
-        )
+    for col_informe, informe in zip(st.columns(n_columnes), INFORMES_CONJUNTURA):
+        with col_informe:
+            url = informe.get("url")
+            if informe.get("pdf_local") and _informe_conj is not None:
+                url = _url_pdf_obert(_informe_conj[0], "informe_estadistic_conjuntura")
+            st.markdown(_targeta_miniatura(url, informe["img"], informe["titol"], informe["titol"]), unsafe_allow_html=True)
 
     st.markdown("")
     st.subheader("INFORMES SECTORIALS APCE")
-    cols_informes = st.columns(len(INFORMES_SECTORIALS))
+    cols_informes = st.columns(n_columnes)
     for col_informe, informe in zip(cols_informes, INFORMES_SECTORIALS):
         with col_informe:
             st.markdown(
-                f'<a href="{informe["url"]}" target="_blank" rel="noopener noreferrer" class="informe-sectorial-link">'
-                f'<img src="data:image/jpeg;base64,{_img_to_data_uri(informe["img"])}" alt="Informe Sectorial {informe["any"]}" class="informe-sectorial-img">'
-                f'<span class="informe-sectorial-caption">Informe Sectorial {informe["any"]}</span>'
-                f'</a>',
+                _targeta_miniatura(informe["url"], informe["img"], f'Informe Sectorial {informe["any"]}', f'Informe Sectorial {informe["any"]}'),
                 unsafe_allow_html=True,
             )
 
